@@ -1,0 +1,23 @@
+﻿# Python
+__pycache__/
+*.pyc
+venv/
+env/
+.venv/
+
+# Model checkpoints - too large for git
+*.pth
+*.onnx
+*.ckpt
+checkpoints/
+
+# Data files
+data/*.tif
+data/*.tiff
+data/*.jpg
+data/*.png
+!data/.gitkeep
+
+# OS junk
+.DS_Store
+Thumbs.db
