@@ -15,29 +15,55 @@ def tile_image(image, tile_size=512, overlap=64):
     return tiles
 
 def stitch_tiles(tile_depths, positions, full_size, tile_size=512, overlap=64):
-    """Blend depth tiles back into one full-size map using a weighted average in overlap zones."""
+    """Blend depth tiles back into one full-size map, aligning each tile's
+    brightness scale to its already-placed neighbors before blending."""
     w, h = full_size
     accum = np.zeros((h, w), dtype=np.float32)
     weight = np.zeros((h, w), dtype=np.float32)
 
     for depth_arr, (x, y) in zip(tile_depths, positions):
         th, tw = depth_arr.shape
-        # simple weight mask: full weight in center, fades to 0 at edges (feathering)
+
+        # --- Scale alignment: shift this tile so its overlap region matches
+        # what's already been placed there, instead of trusting its own scale ---
+        existing_weight_region = weight[y:y+th, x:x+tw]
+        existing_accum_region = accum[y:y+th, x:x+tw]
+        overlap_mask = existing_weight_region > 0.01
+
+        aligned_tile = depth_arr
+        if np.any(overlap_mask):
+            existing_vals = existing_accum_region[overlap_mask] / existing_weight_region[overlap_mask]
+            new_vals = depth_arr[overlap_mask]
+
+            existing_mean, existing_std = existing_vals.mean(), existing_vals.std()
+            new_mean, new_std = new_vals.mean(), new_vals.std()
+
+            if new_std > 1e-6:
+                scale = existing_std / new_std
+            else:
+                scale = 1.0
+
+            aligned_tile = (depth_arr - new_mean) * scale + existing_mean
+
+        # --- Feathering weight mask (fades tile edges into neighbors) ---
         wy = np.ones(th, dtype=np.float32)
         wx = np.ones(tw, dtype=np.float32)
-        fade = overlap
-        if fade > 0:
-            ramp = np.linspace(0, 1, fade)
-            wy[:fade] = ramp
-            wy[-fade:] = ramp[::-1]
-            wx[:fade] = ramp
-            wx[-fade:] = ramp[::-1]
+        fade_y = min(overlap, th // 2)
+        fade_x = min(overlap, tw // 2)
+        if fade_y > 0:
+            ramp_y = np.linspace(0, 1, fade_y)
+            wy[:fade_y] = ramp_y
+            wy[-fade_y:] = ramp_y[::-1]
+        if fade_x > 0:
+            ramp_x = np.linspace(0, 1, fade_x)
+            wx[:fade_x] = ramp_x
+            wx[-fade_x:] = ramp_x[::-1]
         mask = np.outer(wy, wx)
 
-        accum[y:y+th, x:x+tw] += depth_arr * mask
+        accum[y:y+th, x:x+tw] += aligned_tile * mask
         weight[y:y+th, x:x+tw] += mask
 
-    weight[weight == 0] = 1  # avoid divide-by-zero
+    weight[weight == 0] = 1
     stitched = accum / weight
     return stitched
 
