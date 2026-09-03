@@ -28,6 +28,31 @@ featureless gradient with little real structure (see `docs/depth-backend-notes.m
 A weak/uninformative relative depth signal can't be calibrated into a strong
 absolute one, regardless of how good the calibration math is.
 
+## Update: Depth Anything V2 Small vs. Base
+
+Tested whether a larger depth model improves calibration correlation, using
+the same train/test methodology as above.
+
+| Terrain | Model | Correlation | Test RMSE | Test MAE |
+|---|---|---|---|---|
+| City | Small | -0.244 | 9.40 m | 7.69 m |
+| City | Base | **0.375** | 8.99 m | 7.45 m |
+| Hills | Small | 0.184 | 44.30 m | 34.22 m |
+| Hills | Base | 0.194 | 44.17 m | 34.25 m |
+
+**Finding**: Base meaningfully improved city correlation (weak/negative ->
+moderate positive) but barely moved hills. This supports the earlier
+hypothesis: the depth model's structure on organic/rocky terrain is the
+bottleneck, not model size within the same family - a bigger model helps
+where there's real geometric structure (building edges) to find, but doesn't
+help much where there isn't.
+
+**Decision**: switched the whole pipeline (API, sample generation) to use
+Base by default, given the meaningful city accuracy gain, accepting the
+~4x slower inference cost. Hills/organic terrain remains a known weak point
+requiring a different approach later (more reference points, or
+terrain-specific calibration), not just a bigger model.
+
 ## What this suggests for next steps (not yet tried)
 - A larger depth model (Base or DA3) may capture more real structure on
   organic terrain — worth testing if compute allows

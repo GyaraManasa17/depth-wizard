@@ -55,24 +55,32 @@ def evaluate_terrain(label, tif_path, pipe, elevation_data):
     return {"terrain": label, "rmse_m": round(rmse, 2), "mae_m": round(mae, 2), "correlation": round(correlation, 3)}
 
 if __name__ == "__main__":
-    # Add every terrain type with a real GeoTIFF here as they become available
     TEST_SETS = [
         ("city", "../data/test_city_geo.tiff"),
         ("hills", "../data/test_hills_geo.tiff"),
     ]
 
-    print("Loading depth model...")
-    pipe = pipeline(task="depth-estimation", model="depth-anything/Depth-Anything-V2-Small-hf")
+    MODELS = [
+        ("Small", "depth-anything/Depth-Anything-V2-Small-hf"),
+        ("Base", "depth-anything/Depth-Anything-V2-Base-hf"),
+    ]
+
     elevation_data = srtm.get_data()
+    all_results = []
 
-    results = []
-    for label, path in TEST_SETS:
-        if not os.path.exists(path):
-            print(f"SKIPPING {label} - {path} not found")
-            continue
-        results.append(evaluate_terrain(label, path, pipe, elevation_data))
+    for model_label, model_id in MODELS:
+        print(f"\n\n########## Loading model: {model_label} ({model_id}) ##########")
+        pipe = pipeline(task="depth-estimation", model=model_id)
 
-    print("\n\n=== SUMMARY: RMSE / MAE / Correlation by terrain type ===")
-    print(f"{'Terrain':<12} {'RMSE (m)':<12} {'MAE (m)':<12} {'Correlation':<12}")
-    for r in results:
-        print(f"{r['terrain']:<12} {r['rmse_m']:<12} {r['mae_m']:<12} {r['correlation']:<12}")
+        for label, path in TEST_SETS:
+            if not os.path.exists(path):
+                print(f"SKIPPING {label} - {path} not found")
+                continue
+            result = evaluate_terrain(label, path, pipe, elevation_data)
+            result["model"] = model_label
+            all_results.append(result)
+
+    print("\n\n=== SUMMARY: Small vs Base, by terrain ===")
+    print(f"{'Model':<8} {'Terrain':<10} {'RMSE (m)':<12} {'MAE (m)':<12} {'Correlation':<12}")
+    for r in all_results:
+        print(f"{r['model']:<8} {r['terrain']:<10} {r['rmse_m']:<12} {r['mae_m']:<12} {r['correlation']:<12}")
