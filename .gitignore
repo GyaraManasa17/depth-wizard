@@ -11,12 +11,15 @@ env/
 *.ckpt
 checkpoints/
 
-# Data files
+# Data files - blocked by default (keep large/generated data out of git),
+# but small curated test inputs are explicitly allowed below
 data/*.tif
 data/*.tiff
 data/*.jpg
 data/*.png
 !data/.gitkeep
+!data/test_city_geo.tiff
+!data/test_hills_geo.tiff
 
 # OS junk
 .DS_Store
