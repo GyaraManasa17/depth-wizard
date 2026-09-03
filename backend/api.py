@@ -1,5 +1,6 @@
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 import numpy as np
 import io
@@ -9,6 +10,12 @@ from transformers import pipeline
 
 app = FastAPI(title="SatQuery AI - Depth Backend")
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # fine for local dev; restrict this before any real deployment
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # Load the model ONCE when the server starts, not on every request
 # (loading it per-request would make every call painfully slow)
 print("Loading depth model at startup...")
