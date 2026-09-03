@@ -9,7 +9,7 @@ from tile_and_stitch import tile_image, stitch_tiles
 from transformers import pipeline
 from model_config import MODEL_ID
 
-app = FastAPI(title="SatQuery AI - Depth Backend")
+app = FastAPI(title="Depth Wizard - Depth Backend")
 
 app.add_middleware(
     CORSMiddleware,
