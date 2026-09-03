@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SatQuery AI - Terrain Viewer</title>
+    <style>
+        body { margin: 0; background: #111; color: white; font-family: sans-serif; }
+        #controls { position: absolute; top: 10px; left: 10px; z-index: 10; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <input type="file" id="fileInput" accept="image/*">
+        <p id="status">Upload a satellite image to see its 3D terrain.</p>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script>
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 8, 12);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // Mouse drag to orbit around the terrain - placeholder controls, Priyanka's proper nav comes later
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.target.set(0, 0, 0);
+
+        const light = new THREE.DirectionalLight(0xffffff, 1);
+        light.position.set(5, 10, 5);
+        scene.add(light);
+        scene.add(new THREE.AmbientLight(0x888888));
+
+        let terrainMesh = null;
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // --- Read a File/Blob into pixel data via a hidden canvas ---
+        function getImagePixels(imageUrl) {
+            return new Promise((resolve) => {
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    resolve({ img, data: ctx.getImageData(0, 0, img.width, img.height) });
+                };
+                img.src = imageUrl;
+            });
+        }
+
+        // --- Build the 3D terrain mesh from the original photo + depth map ---
+        async function buildTerrain(originalUrl, depthUrl) {
+            const status = document.getElementById('status');
+            status.textContent = 'Building 3D terrain...';
+
+            const { data: depthData } = await getImagePixels(depthUrl);
+            const segmentsX = 100, segmentsY = 100;
+
+            const geometry = new THREE.PlaneGeometry(10, 10, segmentsX - 1, segmentsY - 1);
+            const position = geometry.attributes.position;
+
+            // For each vertex, sample the depth map's brightness and push the vertex up/down
+            for (let i = 0; i < position.count; i++) {
+                const px = i % segmentsX;
+                const py = Math.floor(i / segmentsX);
+                const sampleX = Math.floor((px / segmentsX) * depthData.width);
+                const sampleY = Math.floor((py / segmentsY) * depthData.height);
+                const idx = (sampleY * depthData.width + sampleX) * 4;
+                const brightness = depthData.data[idx] / 255; // 0 (low) to 1 (high)
+                position.setZ(i, brightness * 2.5); // height scale - tweak later
+            }
+            geometry.computeVertexNormals();
+
+            const texture = new THREE.TextureLoader().load(originalUrl);
+            const material = new THREE.MeshStandardMaterial({ map: texture, side: THREE.DoubleSide });
+
+            if (terrainMesh) scene.remove(terrainMesh);
+            terrainMesh = new THREE.Mesh(geometry, material);
+            terrainMesh.rotation.x = -Math.PI / 2;
+            scene.add(terrainMesh);
+
+            status.textContent = 'Done. Drag to orbit, scroll to zoom.';
+        }
+
+        // --- Handle file upload: call the backend, then build terrain from the result ---
+        document.getElementById('fileInput').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const status = document.getElementById('status');
+            status.textContent = 'Uploading and running depth model (this may take a moment)...';
+
+            const originalUrl = URL.createObjectURL(file);
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('http://127.0.0.1:8000/predict-depth', {
+                    method: 'POST',
+                    body: formData
+                });
+                if (!response.ok) throw new Error(`Server returned ${response.status}`);
+
+                const depthBlob = await response.blob();
+                const depthUrl = URL.createObjectURL(depthBlob);
+
+                await buildTerrain(originalUrl, depthUrl);
+            } catch (err) {
+                status.textContent = 'Error: ' + err.message + ' (is the backend server running?)';
+                console.error(err);
+            }
+        });
+    </script>
+</body>
+</html>
