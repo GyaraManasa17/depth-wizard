@@ -7,6 +7,7 @@ import io
 
 from tile_and_stitch import tile_image, stitch_tiles
 from transformers import pipeline
+from model_config import MODEL_ID
 
 app = FastAPI(title="SatQuery AI - Depth Backend")
 
@@ -19,7 +20,7 @@ app.add_middleware(
 # Load the model ONCE when the server starts, not on every request
 # (loading it per-request would make every call painfully slow)
 print("Loading depth model at startup...")
-depth_pipe = pipeline(task="depth-estimation", model="depth-anything/Depth-Anything-V2-Small-hf")
+depth_pipe = pipeline(task="depth-estimation", model=MODEL_ID)
 print("Model ready.")
 
 

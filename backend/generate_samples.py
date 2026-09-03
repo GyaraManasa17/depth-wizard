@@ -3,6 +3,8 @@ from PIL import Image
 import numpy as np
 from tile_and_stitch import tile_image, stitch_tiles
 from transformers import pipeline
+from model_config import MODEL_ID
+
 
 # (source filename in data/, output name to use in sample-outputs/)
 IMAGES = [
@@ -19,7 +21,7 @@ OUTPUT_DIR = "../data/sample-outputs"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 print("Loading model...")
-pipe = pipeline(task="depth-estimation", model="depth-anything/Depth-Anything-V2-Small-hf")
+pipe = pipeline(task="depth-estimation", model=MODEL_ID)
 print("Model ready.\n")
 
 for filename, label in IMAGES:
