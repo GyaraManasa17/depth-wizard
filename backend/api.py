@@ -20,6 +20,7 @@ app.add_middleware(
     allow_origins=["*"],  # fine for local dev; restrict this before any real deployment
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Fit-Params", "X-Elevation-Min", "X-Elevation-Max"],
 )
 # Load the model ONCE when the server starts, not on every request
 # (loading it per-request would make every call painfully slow)
@@ -81,6 +82,8 @@ async def predict_elevation_geotiff(file: UploadFile = File(...)):
     # Get real SRTM elevation for this exact area and fit the correction
     srtm_grid = get_srtm_grid(transform, width, height)
     absolute_dsm, a, b = calibrate_to_absolute(relative_depth, srtm_grid)
+    elevation_min = float(np.nanmin(absolute_dsm))
+    elevation_max = float(np.nanmax(absolute_dsm))
 
     # Save to a temp file, then stream it back
     with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as tmp:
@@ -96,6 +99,20 @@ async def predict_elevation_geotiff(file: UploadFile = File(...)):
         media_type="image/tiff",
         headers={
             "Content-Disposition": "attachment; filename=absolute_dsm.tif",
-            "X-Fit-Params": f"a={a:.4f},b={b:.4f}"
+            "X-Fit-Params": f"a={a:.4f},b={b:.4f}",
+            "X-Elevation-Min": f"{elevation_min:.2f}",
+            "X-Elevation-Max": f"{elevation_max:.2f}"
         }
     )
+
+@app.post("/geotiff-preview")
+async def geotiff_preview(file: UploadFile = File(...)):
+    """Converts a GeoTIFF's RGB content to a PNG the browser can actually display."""
+    contents = await file.read()
+    img_rgb, _, _, _, _ = load_geotiff_from_bytes(contents)
+    image = Image.fromarray(img_rgb)
+
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="image/png")

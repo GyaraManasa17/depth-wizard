@@ -10,9 +10,17 @@
 </head>
 <body>
     <div id="controls">
-        <input type="file" id="fileInput" accept="image/*">
-        <button id="modeToggle" style="display:none;">Enter First-Person Mode</button>
+        <div>
+            <label style="font-size:0.9em;">Regular photo (relative height only):</label><br>
+            <input type="file" id="fileInput" accept="image/*">
+        </div>
+        <div style="margin-top:8px;">
+            <label style="font-size:0.9em;">Georeferenced GeoTIFF (real elevation in meters):</label><br>
+            <input type="file" id="geoFileInput" accept=".tif,.tiff">
+        </div>
+        <button id="modeToggle" style="display:none; margin-top:8px;">Enter First-Person Mode</button>
         <p id="status">Upload a satellite image to see its 3D terrain.</p>
+        <p id="elevationInfo" style="display:none; font-size:0.9em; color:#8f8;"></p>
         <p id="hint" style="display:none; font-size:0.9em; color:#aaa;">WASD to move, mouse to look, Shift/Space for down/up, Esc to exit</p>
     </div>
 
@@ -203,6 +211,60 @@
             document.getElementById('modeToggle').style.display = 'inline-block';
             camera.position.set(0, 8, 12); // reset camera to a sensible starting point above the terrain
         }
+    // --- Handle GeoTIFF upload: call the absolute-elevation endpoint ---
+        document.getElementById('geoFileInput').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const status = document.getElementById('status');
+            const elevationInfo = document.getElementById('elevationInfo');
+            status.textContent = 'Uploading GeoTIFF and computing real elevation (this takes a bit longer)...';
+            elevationInfo.style.display = 'none';
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                // Get a browser-displayable PNG version of the GeoTIFF for use as the texture
+                const previewResponse = await fetch('http://127.0.0.1:8000/geotiff-preview', {
+                    method: 'POST',
+                    body: formData
+                });
+                const previewBlob = await previewResponse.blob();
+                const originalUrl = URL.createObjectURL(previewBlob);
+
+                const response = await fetch('http://127.0.0.1:8000/predict-elevation-geotiff', {
+                    method: 'POST',
+                    body: formData
+                });
+                if (!response.ok) throw new Error(`Server returned ${response.status}`);
+
+                // Real elevation values, computed server-side (trustworthy - not parsed client-side)
+                const fitParams = response.headers.get('X-Fit-Params') || '';
+                const elevMin = response.headers.get('X-Elevation-Min');
+                const elevMax = response.headers.get('X-Elevation-Max');
+                const dsmBlob = await response.blob();
+
+                elevationInfo.textContent = `Real elevation range: ${elevMin}m to ${elevMax}m (fit: ${fitParams})`;
+                elevationInfo.style.display = 'block';
+
+                // For the 3D view, we still need a depth-map-style image to build the mesh from -
+                // reuse the same visual pipeline as the regular upload, since the DSM's actual
+                // shape matches what /predict-depth would show for this same image, just rescaled.
+                const depthResponse = await fetch('http://127.0.0.1:8000/predict-depth', {
+                    method: 'POST',
+                    body: formData
+                });
+                const depthBlob = await depthResponse.blob();
+                const depthUrl = URL.createObjectURL(depthBlob);
+
+                await buildTerrain(originalUrl, depthUrl);
+                status.textContent = 'Done. This terrain has real elevation data attached (see above).';
+            } catch (err) {
+                status.textContent = 'Error: ' + err.message + ' (is the backend server running?)';
+                console.error(err);
+            }
+        });
 
         // --- Handle file upload: call the backend, then build terrain from the result ---
         document.getElementById('fileInput').addEventListener('change', async (e) => {
