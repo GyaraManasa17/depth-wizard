@@ -12,6 +12,7 @@ from model_config import MODEL_ID
 import tempfile
 import os
 from calibration_utils import load_geotiff_from_bytes, get_srtm_grid, calibrate_to_absolute, save_dsm_geotiff
+from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(title="Depth Wizard - Depth Backend")
 
@@ -29,7 +30,7 @@ depth_pipe = pipeline(task="depth-estimation", model=MODEL_ID)
 print("Model ready.")
 
 
-@app.get("/")
+@app.get("/health")
 def health_check():
     return {"status": "ok", "message": "Depth backend is running"}
 
@@ -116,3 +117,7 @@ async def geotiff_preview(file: UploadFile = File(...)):
     image.save(buf, format="PNG")
     buf.seek(0)
     return StreamingResponse(buf, media_type="image/png")
+
+# Serve the frontend's static files directly from this same server.
+# Must be mounted LAST, after all API routes, so it doesn't shadow them.
+app.mount("/", StaticFiles(directory="../frontend", html=True), name="frontend")

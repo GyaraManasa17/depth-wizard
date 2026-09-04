@@ -226,14 +226,14 @@
 
             try {
                 // Get a browser-displayable PNG version of the GeoTIFF for use as the texture
-                const previewResponse = await fetch('http://127.0.0.1:8000/geotiff-preview', {
+                const previewResponse = await fetch('/geotiff-preview', {
                     method: 'POST',
                     body: formData
                 });
                 const previewBlob = await previewResponse.blob();
                 const originalUrl = URL.createObjectURL(previewBlob);
 
-                const response = await fetch('http://127.0.0.1:8000/predict-elevation-geotiff', {
+                const response = await fetch('/predict-elevation-geotiff', {
                     method: 'POST',
                     body: formData
                 });
@@ -251,7 +251,7 @@
                 // For the 3D view, we still need a depth-map-style image to build the mesh from -
                 // reuse the same visual pipeline as the regular upload, since the DSM's actual
                 // shape matches what /predict-depth would show for this same image, just rescaled.
-                const depthResponse = await fetch('http://127.0.0.1:8000/predict-depth', {
+                const depthResponse = await fetch('/predict-depth', {
                     method: 'POST',
                     body: formData
                 });
@@ -280,7 +280,7 @@
             formData.append('file', file);
 
             try {
-                const response = await fetch('http://127.0.0.1:8000/predict-depth', {
+                const response = await fetch('/predict-depth', {
                     method: 'POST',
                     body: formData
                 });
