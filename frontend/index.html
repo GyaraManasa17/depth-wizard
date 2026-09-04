@@ -11,11 +11,14 @@
 <body>
     <div id="controls">
         <input type="file" id="fileInput" accept="image/*">
+        <button id="modeToggle" style="display:none;">Enter First-Person Mode</button>
         <p id="status">Upload a satellite image to see its 3D terrain.</p>
+        <p id="hint" style="display:none; font-size:0.9em; color:#aaa;">WASD to move, mouse to look, Shift/Space for down/up, Esc to exit</p>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
     <script>
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -25,9 +28,57 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
-        // Mouse drag to orbit around the terrain - placeholder controls, Priyanka's proper nav comes later
-        const controls = new THREE.OrbitControls(camera, renderer.domElement);
-        controls.target.set(0, 0, 0);
+        const orbitControls = new THREE.OrbitControls(camera, renderer.domElement);
+        orbitControls.target.set(0, 0, 0);
+
+        const flyControls = new THREE.PointerLockControls(camera, document.body);
+        let flyMode = false;
+        const moveState = { forward: false, back: false, left: false, right: false, up: false, down: false };
+        const flySpeed = 6; // units per second
+        let lastFrameTime = performance.now();
+
+        const modeToggle = document.getElementById('modeToggle');
+        const hint = document.getElementById('hint');
+
+        modeToggle.addEventListener('click', () => {
+            if (!flyMode) {
+                flyControls.lock(); // browser will only allow this from a real user click, which this is
+            } else {
+                flyControls.unlock();
+            }
+        });
+
+        flyControls.addEventListener('lock', () => {
+            flyMode = true;
+            orbitControls.enabled = false;
+            modeToggle.textContent = 'Exit First-Person Mode';
+            hint.style.display = 'block';
+        });
+
+        flyControls.addEventListener('unlock', () => {
+            flyMode = false;
+            orbitControls.enabled = true;
+            modeToggle.textContent = 'Enter First-Person Mode';
+            hint.style.display = 'none';
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (!flyMode) return;
+            if (e.code === 'KeyW') moveState.forward = true;
+            if (e.code === 'KeyS') moveState.back = true;
+            if (e.code === 'KeyA') moveState.left = true;
+            if (e.code === 'KeyD') moveState.right = true;
+            if (e.code === 'Space') moveState.up = true;
+            if (e.code === 'ShiftLeft') moveState.down = true;
+        });
+        document.addEventListener('keyup', (e) => {
+            if (e.code === 'KeyW') moveState.forward = false;
+            if (e.code === 'KeyS') moveState.back = false;
+            if (e.code === 'KeyA') moveState.left = false;
+            if (e.code === 'KeyD') moveState.right = false;
+            if (e.code === 'Space') moveState.up = false;
+            if (e.code === 'ShiftLeft') moveState.down = false;
+        });
 
         const light = new THREE.DirectionalLight(0xffffff, 1);
         light.position.set(5, 10, 5);
@@ -38,7 +89,21 @@
 
         function animate() {
             requestAnimationFrame(animate);
-            controls.update();
+            const now = performance.now();
+            const delta = (now - lastFrameTime) / 1000;
+            lastFrameTime = now;
+
+            if (flyMode) {
+                const moveDist = flySpeed * delta;
+                if (moveState.forward) flyControls.moveForward(moveDist);
+                if (moveState.back) flyControls.moveForward(-moveDist);
+                if (moveState.right) flyControls.moveRight(moveDist);
+                if (moveState.left) flyControls.moveRight(-moveDist);
+                if (moveState.up) camera.position.y += moveDist;
+                if (moveState.down) camera.position.y -= moveDist;
+            } else {
+                orbitControls.update();
+            }
             renderer.render(scene, camera);
         }
         animate();
@@ -135,6 +200,8 @@
             scene.add(terrainMesh);
 
             status.textContent = 'Done. Drag to orbit, scroll to zoom.';
+            document.getElementById('modeToggle').style.display = 'inline-block';
+            camera.position.set(0, 8, 12); // reset camera to a sensible starting point above the terrain
         }
 
         // --- Handle file upload: call the backend, then build terrain from the result ---
