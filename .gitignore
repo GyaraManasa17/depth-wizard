@@ -19,7 +19,12 @@ data/*.jpg
 data/*.png
 !data/.gitkeep
 !data/test_city_geo.tiff
+!data/test_city2_geo.tiff
 !data/test_hills_geo.tiff
+!data/test_hills2_geo.tiff
+!data/test_forest_geo.tiff
+!data/test_sparse_geo.tiff
+!data/test_mixed_geo.tiff
 
 # OS junk
 .DS_Store
