@@ -58,10 +58,14 @@ if __name__ == "__main__":
     TEST_SETS = [
         ("city", "../data/test_city_geo.tiff"),
         ("hills", "../data/test_hills_geo.tiff"),
+        ("forest", "../data/test_forest_geo.tiff"),
+        ("sparse", "../data/test_sparse_geo.tiff"),
+        ("city2", "../data/test_city2_geo.tiff"),
+        ("hills2", "../data/test_hills2_geo.tiff"),
+        ("mixed", "../data/test_mixed_geo.tiff"),
     ]
 
     MODELS = [
-        ("Small", "depth-anything/Depth-Anything-V2-Small-hf"),
         ("Base", "depth-anything/Depth-Anything-V2-Base-hf"),
     ]
 

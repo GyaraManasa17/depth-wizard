@@ -61,3 +61,47 @@ terrain-specific calibration), not just a bigger model.
 - City terrain's negative correlation is a separate issue: likely SRTM
   genuinely cannot resolve individual building heights at 30m resolution,
   so building-detail depth signal has no real counterpart in SRTM at all
+
+## Update: Full terrain-type sweep + bounding box precision
+
+Tested all 5 required terrain types (city, hills, forest, sparse, mixed) with
+real GeoTIFFs and SRTM ground truth, using Depth Anything V2 Base. Also
+tested a second hill location and a tighter city crop to isolate whether
+weak results were about terrain type or about crop quality.
+
+| Terrain | Correlation | RMSE | MAE |
+|---|---|---|---|
+| City (tight box) | **0.776** | 5.83 m | 4.63 m |
+| Forest (KBR National Park) | 0.66 | 6.04 m | 4.75 m |
+| Sparse (Shamshabad) | 0.601 | 3.92 m | 3.14 m |
+| Mixed (Kompally) | 0.453 | 5.86 m | 4.75 m |
+| City (original, looser box) | 0.375 | 8.99 m | 7.45 m |
+| Hills - Bhongir (bare rock) | 0.194 | 44.17 m | 34.25 m |
+| Hills - Ananthagiri (vegetated) | **-0.293** | 29.34 m | 23.87 m |
+
+## Two findings
+
+**1. Bounding box precision matters more than expected.** Re-cropping the
+same city location more tightly took correlation from 0.375 to 0.776 - more
+than double. This means the sparse/forest/mixed numbers above likely have
+real headroom left if their crops were tightened further; box quality is a
+real, controllable source of noise in these results, separate from terrain
+type itself.
+
+**2. Hilly/undulating terrain is a genuine, repeated weak point, not a
+one-location fluke.** Two different hill locations - Bhongir (bare exposed
+rock) and Ananthagiri (more vegetated, rolling terrain) - both produced weak
+or negative correlation, despite looking visually quite different from each
+other. This rules out "picked an unlucky spot" and points to something more
+fundamental about how this depth model + linear SRTM calibration handles
+gradual, undulating elevation change, regardless of surface texture/vegetation.
+
+## Ranking so far (best to worst structure for this method)
+City (tight crop) > Forest > Sparse > Mixed > Hills
+
+## Next steps for calibration (not pursued further for now - shifting focus
+## to frontend/visualization to balance the 50/50 grading split)
+- Tighter, more careful bounding boxes could likely improve sparse/forest/mixed further
+- Hills remains the core unsolved problem - would need either more reference
+  points per region, a fundamentally different method for gradual terrain,
+  or acceptance as a documented limitation for the final submission
