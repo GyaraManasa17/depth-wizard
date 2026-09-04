@@ -65,26 +65,64 @@
             });
         }
 
-        // --- Build the 3D terrain mesh from the original photo + depth map ---
+        // Sample the depth map at (x,y) with bilinear interpolation for smoother results
+        // than just picking the single nearest pixel
+        function sampleDepthSmooth(depthData, u, v) {
+            const x = u * (depthData.width - 1);
+            const y = v * (depthData.height - 1);
+            const x0 = Math.floor(x), x1 = Math.min(x0 + 1, depthData.width - 1);
+            const y0 = Math.floor(y), y1 = Math.min(y0 + 1, depthData.height - 1);
+            const fx = x - x0, fy = y - y0;
+
+            const getPixel = (px, py) => depthData.data[(py * depthData.width + px) * 4] / 255;
+            const top = getPixel(x0, y0) * (1 - fx) + getPixel(x1, y0) * fx;
+            const bottom = getPixel(x0, y1) * (1 - fx) + getPixel(x1, y1) * fx;
+            return top * (1 - fy) + bottom * fy;
+        }
+
         async function buildTerrain(originalUrl, depthUrl) {
             const status = document.getElementById('status');
             status.textContent = 'Building 3D terrain...';
 
             const { data: depthData } = await getImagePixels(depthUrl);
-            const segmentsX = 100, segmentsY = 100;
+            // Higher resolution mesh - more detail, still fast enough for a browser
+            const segmentsX = 200, segmentsY = 200;
 
             const geometry = new THREE.PlaneGeometry(10, 10, segmentsX - 1, segmentsY - 1);
             const position = geometry.attributes.position;
 
-            // For each vertex, sample the depth map's brightness and push the vertex up/down
+            // First pass: sample heights with bilinear interpolation (smoother than raw pixels)
+            const heights = new Float32Array(position.count);
+            const margin = 0.04; // skip the outer ~4% of the depth map, where tile-seam artifacts live
             for (let i = 0; i < position.count; i++) {
                 const px = i % segmentsX;
                 const py = Math.floor(i / segmentsX);
-                const sampleX = Math.floor((px / segmentsX) * depthData.width);
-                const sampleY = Math.floor((py / segmentsY) * depthData.height);
-                const idx = (sampleY * depthData.width + sampleX) * 4;
-                const brightness = depthData.data[idx] / 255; // 0 (low) to 1 (high)
-                position.setZ(i, brightness * 2.5); // height scale - tweak later
+                const u = margin + (px / (segmentsX - 1)) * (1 - 2 * margin);
+                const v = margin + (py / (segmentsY - 1)) * (1 - 2 * margin);
+                heights[i] = sampleDepthSmooth(depthData, u, v);
+            }
+
+            // Second pass: light smoothing - average each point with its immediate neighbors
+            // to soften sharp jumps (like tile-seam artifacts) without losing real shape
+            const smoothed = new Float32Array(position.count);
+            for (let py = 0; py < segmentsY; py++) {
+                for (let px = 0; px < segmentsX; px++) {
+                    const i = py * segmentsX + px;
+                    let sum = heights[i], count = 1;
+                    const neighbors = [[-1,0],[1,0],[0,-1],[0,1]];
+                    for (const [dx, dy] of neighbors) {
+                        const nx = px + dx, ny = py + dy;
+                        if (nx >= 0 && nx < segmentsX && ny >= 0 && ny < segmentsY) {
+                            sum += heights[ny * segmentsX + nx];
+                            count++;
+                        }
+                    }
+                    smoothed[i] = sum / count;
+                }
+            }
+
+            for (let i = 0; i < position.count; i++) {
+                position.setZ(i, smoothed[i] * 2.5);
             }
             geometry.computeVertexNormals();
 
