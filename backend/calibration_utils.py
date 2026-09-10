@@ -13,6 +13,12 @@ def get_elevation_source():
         _elevation_data = srtm.get_data()
     return _elevation_data
 
+class NotGeoreferencedError(Exception):
+    """Raised when an uploaded file has no real coordinate data - e.g. a plain photo,
+    not an actual GeoTIFF. Must be checked before any elevation lookups are attempted,
+    since proceeding without this check causes lookups against meaningless coordinates."""
+    pass
+
 def load_geotiff_from_bytes(file_bytes):
     """Open a GeoTIFF from raw uploaded bytes (no temp file needed)."""
     with MemoryFile(file_bytes) as memfile:
@@ -21,6 +27,13 @@ def load_geotiff_from_bytes(file_bytes):
             transform = src.transform
             crs = src.crs
             width, height = src.width, src.height
+
+    if crs is None:
+        raise NotGeoreferencedError(
+            "This file has no coordinate reference system - it isn't actually "
+            "georeferenced. Upload a real GeoTIFF, not a plain photo."
+        )
+
     img_rgb = np.transpose(img_array, (1, 2, 0)).astype(np.uint8)
     return img_rgb, transform, crs, width, height
 

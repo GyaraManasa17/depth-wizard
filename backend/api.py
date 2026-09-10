@@ -13,6 +13,7 @@ import tempfile
 import os
 from calibration_utils import load_geotiff_from_bytes, get_srtm_grid, calibrate_to_absolute, save_dsm_geotiff
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 
 app = FastAPI(title="Depth Wizard - Depth Backend")
 
@@ -69,10 +70,13 @@ async def predict_elevation_geotiff(file: UploadFile = File(...)):
     """Takes a georeferenced GeoTIFF, returns an absolute-elevation DSM GeoTIFF (real meters)."""
     contents = await file.read()
 
+    from calibration_utils import NotGeoreferencedError
     try:
         img_rgb, transform, crs, width, height = load_geotiff_from_bytes(contents)
+    except NotGeoreferencedError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
     except Exception as e:
-        return {"error": f"Could not read as a georeferenced GeoTIFF: {str(e)}"}
+        return JSONResponse(status_code=400, content={"error": f"Could not read this file: {str(e)}"})
 
     image = Image.fromarray(img_rgb)
 
