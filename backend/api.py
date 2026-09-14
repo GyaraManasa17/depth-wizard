@@ -40,7 +40,13 @@ def health_check():
 async def predict_depth(file: UploadFile = File(...)):
     # Read the uploaded image
     contents = await file.read()
-    image = Image.open(io.BytesIO(contents)).convert("RGB")
+    try:
+        image = Image.open(io.BytesIO(contents)).convert("RGB")
+    except Exception:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Could not read this as an image. Upload a valid JPG or PNG file."}
+        )
     w, h = image.size
 
     # Tile, run model on each tile, stitch back together
@@ -114,7 +120,10 @@ async def predict_elevation_geotiff(file: UploadFile = File(...)):
 async def geotiff_preview(file: UploadFile = File(...)):
     """Converts a GeoTIFF's RGB content to a PNG the browser can actually display."""
     contents = await file.read()
-    img_rgb, _, _, _, _ = load_geotiff_from_bytes(contents)
+    try:
+        img_rgb, _, _, _, _ = load_geotiff_from_bytes(contents)
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"error": f"Could not read this file: {str(e)}"})
     image = Image.fromarray(img_rgb)
 
     buf = io.BytesIO()
