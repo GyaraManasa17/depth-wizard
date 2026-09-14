@@ -48,12 +48,32 @@ def get_srtm_grid(transform, width, height):
     return grid
 
 def calibrate_to_absolute(relative_depth, srtm_grid):
-    """Fit real_meters = a * relative_depth + b using all valid pixels,
-    return the absolute elevation grid plus the fit parameters."""
+    """Fit real_meters = a * relative_depth + b using an 80/20 train/test split
+    of valid pixels (never fitting and testing on the same points), then apply
+    the fit to the whole image. Returns the absolute elevation grid, fit
+    parameters, and honest held-out validation metrics."""
     valid_mask = ~np.isnan(srtm_grid)
-    a, b = np.polyfit(relative_depth[valid_mask].ravel(), srtm_grid[valid_mask].ravel(), 1)
+    depth_valid = relative_depth[valid_mask].ravel()
+    srtm_valid = srtm_grid[valid_mask].ravel()
+
+    np.random.seed(42)
+    n = len(depth_valid)
+    indices = np.random.permutation(n)
+    split = int(n * 0.8)
+    train_idx, test_idx = indices[:split], indices[split:]
+
+    a, b = np.polyfit(depth_valid[train_idx], srtm_valid[train_idx], 1)
     absolute_dsm = a * relative_depth + b
-    return absolute_dsm, float(a), float(b)
+
+    test_predictions = a * depth_valid[test_idx] + b
+    test_actual = srtm_valid[test_idx]
+    residuals = test_predictions - test_actual
+    rmse = float(np.sqrt(np.mean(residuals ** 2)))
+    mae = float(np.mean(np.abs(residuals)))
+    correlation = float(np.corrcoef(depth_valid, srtm_valid)[0, 1])
+
+    metrics = {"rmse": rmse, "mae": mae, "correlation": correlation}
+    return absolute_dsm, float(a), float(b), metrics
 
 def save_dsm_geotiff(absolute_dsm, transform, crs, output_path):
     with rasterio.open(

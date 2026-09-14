@@ -239,13 +239,18 @@
                 });
                 if (!response.ok) throw new Error(`Server returned ${response.status}`);
 
-                // Real elevation values, computed server-side (trustworthy - not parsed client-side)
+                // Real elevation values AND honest accuracy metrics, computed server-side
                 const fitParams = response.headers.get('X-Fit-Params') || '';
                 const elevMin = response.headers.get('X-Elevation-Min');
                 const elevMax = response.headers.get('X-Elevation-Max');
+                const rmse = response.headers.get('X-RMSE');
+                const mae = response.headers.get('X-MAE');
+                const correlation = response.headers.get('X-Correlation');
                 const dsmBlob = await response.blob();
 
-                elevationInfo.textContent = `Real elevation range: ${elevMin}m to ${elevMax}m (fit: ${fitParams})`;
+                elevationInfo.innerHTML =
+                    `Real elevation range: ${elevMin}m to ${elevMax}m (fit: ${fitParams})<br>` +
+                    `Validated against SRTM reference data (held-out test): RMSE ${rmse}m, MAE ${mae}m, correlation ${correlation}`;
                 elevationInfo.style.display = 'block';
 
                 // For the 3D view, we still need a depth-map-style image to build the mesh from -

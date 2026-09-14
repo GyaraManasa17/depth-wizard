@@ -22,7 +22,7 @@ app.add_middleware(
     allow_origins=["*"],  # fine for local dev; restrict this before any real deployment
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Fit-Params", "X-Elevation-Min", "X-Elevation-Max"],
+    expose_headers=["X-Fit-Params", "X-Elevation-Min", "X-Elevation-Max", "X-RMSE", "X-MAE", "X-Correlation"],
 )
 # Load the model ONCE when the server starts, not on every request
 # (loading it per-request would make every call painfully slow)
@@ -92,7 +92,8 @@ async def predict_elevation_geotiff(file: UploadFile = File(...)):
 
     # Get real SRTM elevation for this exact area and fit the correction
     srtm_grid = get_srtm_grid(transform, width, height)
-    absolute_dsm, a, b = calibrate_to_absolute(relative_depth, srtm_grid)
+    absolute_dsm, a, b, metrics = calibrate_to_absolute(relative_depth, srtm_grid)
+
     elevation_min = float(np.nanmin(absolute_dsm))
     elevation_max = float(np.nanmax(absolute_dsm))
 
@@ -112,7 +113,10 @@ async def predict_elevation_geotiff(file: UploadFile = File(...)):
             "Content-Disposition": "attachment; filename=absolute_dsm.tif",
             "X-Fit-Params": f"a={a:.4f},b={b:.4f}",
             "X-Elevation-Min": f"{elevation_min:.2f}",
-            "X-Elevation-Max": f"{elevation_max:.2f}"
+            "X-Elevation-Max": f"{elevation_max:.2f}",
+            "X-RMSE": f"{metrics['rmse']:.2f}",
+            "X-MAE": f"{metrics['mae']:.2f}",
+            "X-Correlation": f"{metrics['correlation']:.3f}"
         }
     )
 
