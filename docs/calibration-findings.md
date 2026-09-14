@@ -105,3 +105,41 @@ City (tight crop) > Forest > Sparse > Mixed > Hills
 - Hills remains the core unsolved problem - would need either more reference
   points per region, a fundamentally different method for gradual terrain,
   or acceptance as a documented limitation for the final submission
+
+## Update: GAMUS dataset experiment (pooled multi-scene calibration)
+
+Downloaded 40 real RGB+height pairs from the GAMUS dataset (30 train, 10 val;
+Washington DC aerial imagery, height = above-ground-level in meters, 1024x1024,
+1:1 pixel-matched with RGB - see calibration/download_gamus_subset.py).
+
+Trained a single linear regression across all 30 training scenes pooled
+together (491,520 pixel samples), evaluated on 10 held-out validation scenes
+never seen during training (163,840 pixel samples):
+
+| Metric | Value |
+|---|---|
+| Correlation | 0.321 |
+| RMSE | 8.62 m |
+| MAE | 7.12 m |
+
+**Finding**: this did NOT clearly outperform the best single-image SRTM
+calibrations (city tight-crop reached 0.776 correlation). Root cause: pooling
+raw relative-depth values across 30 *different* images reintroduces the same
+scale-mismatch problem documented earlier with tile-stitching - each image's
+relative depth is independently normalized by the model, so combining raw
+values from different scenes into one global fit mixes incompatible scales.
+A per-image fit avoids this by only ever comparing a scene to itself, but
+can't benefit from GAMUS's larger, more diverse training data as a result.
+
+**Scope note**: all 40 GAMUS samples used are Washington DC aerial imagery -
+useful as a proof of concept, but not representative of the Indian terrain
+types (Hyderabad-area cities/hills/forest) this project is actually targeting.
+
+**Not pursued further given time constraints, but the clear next step**:
+normalize each scene's relative depth (e.g. z-score to its own mean/std)
+*before* pooling across scenes, so the model learns the true shape
+relationship between depth and height rather than being confused by
+scale differences between scenes. Full fine-tuning of the depth model
+backbone on GAMUS (as suggested by the official problem statement update)
+remains the most promising path to closing the domain gap on organic/hilly
+terrain specifically, but requires GPU compute not available for this project.
