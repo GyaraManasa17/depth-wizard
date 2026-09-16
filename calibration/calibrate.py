@@ -35,8 +35,8 @@ image = Image.fromarray(img_rgb)
 print(f"Image size: {width}x{height}")
 
 # --- Step 2: Run the depth model to get RELATIVE depth ---
-print("Loading depth model...")
-pipe = pipeline(task="depth-estimation", model="depth-anything/Depth-Anything-V2-Small-hf")
+from model_config import MODEL_ID
+pipe = pipeline(task="depth-estimation", model=MODEL_ID)
 print("Running inference...")
 result = pipe(image)
 relative_depth = np.array(result["depth"]).astype(np.float64)

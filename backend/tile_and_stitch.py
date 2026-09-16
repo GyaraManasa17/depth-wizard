@@ -2,7 +2,7 @@ import numpy as np
 from PIL import Image
 from transformers import pipeline
 
-def tile_image(image, tile_size=512, overlap=64):
+def tile_image(image, tile_size=512, overlap=128):
     """Split image into overlapping tiles. Returns list of (tile, x, y)."""
     w, h = image.size
     stride = tile_size - overlap
@@ -14,7 +14,7 @@ def tile_image(image, tile_size=512, overlap=64):
             tiles.append((tile, x, y))
     return tiles
 
-def stitch_tiles(tile_depths, positions, full_size, tile_size=512, overlap=64):
+def stitch_tiles(tile_depths, positions, full_size, tile_size=512, overlap=128):
     """Blend depth tiles back into one full-size map, aligning each tile's
     brightness scale to its already-placed neighbors before blending."""
     w, h = full_size
@@ -67,9 +67,10 @@ def stitch_tiles(tile_depths, positions, full_size, tile_size=512, overlap=64):
     stitched = accum / weight
     return stitched
 
-def run_tiled_depth(image_path, output_path, tile_size=512, overlap=64):
-    print("Loading model...")
-    pipe = pipeline(task="depth-estimation", model="depth-anything/Depth-Anything-V2-Small-hf")
+def run_tiled_depth(image_path, output_path, tile_size=512, overlap=128):
+    from model_config import MODEL_ID
+    print(f"Loading model {MODEL_ID}...")
+    pipe = pipeline(task="depth-estimation", model=MODEL_ID)
 
     image = Image.open(image_path).convert("RGB")
     w, h = image.size
@@ -101,5 +102,5 @@ if __name__ == "__main__":
         image_path="../data/test_city.jpg",
         output_path="../data/test_city_tiled_output.png",
         tile_size=512,
-        overlap=64
+        overlap=128
     )

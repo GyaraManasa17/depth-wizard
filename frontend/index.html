@@ -1,82 +1,714 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Depth Wizard - Terrain Viewer</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="DepthWizard - Transform satellite imagery into interactive 3D terrain with real elevation data. Single-view height estimation and 3D flythrough.">
+    <title>DepthWizard — Terrain Intelligence Platform</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        body { margin: 0; background: #111; color: white; font-family: sans-serif; }
-        #controls { position: absolute; top: 10px; left: 10px; z-index: 10; }
-        canvas { display: block; }
+        :root {
+            --bg-primary: #0a0e17;
+            --bg-secondary: #111827;
+            --bg-glass: rgba(17, 24, 39, 0.75);
+            --bg-glass-hover: rgba(17, 24, 39, 0.9);
+            --border-color: rgba(99, 102, 241, 0.2);
+            --border-glow: rgba(99, 102, 241, 0.5);
+            --accent: #6366f1;
+            --accent-light: #818cf8;
+            --accent-glow: rgba(99, 102, 241, 0.3);
+            --success: #34d399;
+            --warning: #fbbf24;
+            --danger: #f87171;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --slope-flat: #22c55e;
+            --slope-moderate: #eab308;
+            --slope-steep: #ef4444;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        /* --- Canvas --- */
+        #renderCanvas { display: block; width: 100vw; height: 100vh; }
+
+        /* --- Top Bar --- */
+        .top-bar {
+            position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 12px 20px;
+            background: linear-gradient(180deg, rgba(10, 14, 23, 0.95) 0%, rgba(10, 14, 23, 0) 100%);
+            pointer-events: none;
+        }
+        .top-bar > * { pointer-events: auto; }
+
+        .logo {
+            display: flex; align-items: center; gap: 10px;
+            font-size: 18px; font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+        .logo-icon {
+            width: 32px; height: 32px;
+            background: linear-gradient(135deg, var(--accent), #a78bfa);
+            border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 16px;
+        }
+        .logo-badge {
+            font-size: 10px; font-weight: 600;
+            background: var(--accent);
+            color: white;
+            padding: 2px 6px;
+            border-radius: 4px;
+            letter-spacing: 0.5px;
+        }
+
+        .top-bar-right {
+            display: flex; gap: 8px; align-items: center;
+        }
+
+        /* --- Glass Panels --- */
+        .glass-panel {
+            background: var(--bg-glass);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+            transition: border-color 0.3s ease;
+        }
+        .glass-panel:hover { border-color: var(--border-glow); }
+
+        /* --- Left Sidebar --- */
+        .sidebar-left {
+            position: fixed; top: 64px; left: 16px; z-index: 90;
+            width: 300px;
+            display: flex; flex-direction: column; gap: 12px;
+            max-height: calc(100vh - 80px);
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: var(--accent) transparent;
+        }
+
+        .panel-title {
+            font-size: 11px; font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            margin-bottom: 10px;
+            display: flex; align-items: center; gap: 6px;
+        }
+        .panel-title::before {
+            content: '';
+            width: 3px; height: 12px;
+            background: var(--accent);
+            border-radius: 2px;
+        }
+
+        /* --- Upload Area --- */
+        .upload-zone {
+            border: 2px dashed var(--border-color);
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        .upload-zone:hover,
+        .upload-zone.drag-over {
+            border-color: var(--accent);
+            background: var(--accent-glow);
+        }
+        .upload-zone input[type="file"] {
+            position: absolute; inset: 0;
+            opacity: 0; cursor: pointer;
+        }
+        .upload-icon { font-size: 28px; margin-bottom: 8px; }
+        .upload-label {
+            font-size: 13px; font-weight: 500;
+            color: var(--text-secondary);
+        }
+        .upload-sublabel {
+            font-size: 11px; color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        /* --- Buttons --- */
+        .btn {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 8px 14px;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            background: var(--bg-glass);
+            color: var(--text-primary);
+            font-family: inherit; font-size: 12px; font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            backdrop-filter: blur(10px);
+        }
+        .btn:hover {
+            border-color: var(--accent);
+            background: var(--accent-glow);
+            transform: translateY(-1px);
+        }
+        .btn-primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
+        }
+        .btn-primary:hover {
+            background: var(--accent-light);
+            border-color: var(--accent-light);
+        }
+        .btn-sm { padding: 5px 10px; font-size: 11px; }
+        .btn-icon { padding: 6px 8px; }
+        .btn-group { display: flex; gap: 4px; }
+        .btn.active {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
+        }
+
+        /* --- Status Bar --- */
+        .status-bar {
+            position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+            z-index: 90;
+            display: flex; align-items: center; gap: 12px;
+            padding: 8px 16px;
+        }
+        .status-dot {
+            width: 6px; height: 6px; border-radius: 50%;
+            background: var(--success);
+            animation: pulse 2s ease-in-out infinite;
+        }
+        .status-dot.processing { background: var(--warning); }
+        .status-dot.error { background: var(--danger); animation: none; }
+        .status-text { font-size: 12px; color: var(--text-secondary); }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        /* --- Progress Bar --- */
+        .progress-container {
+            width: 100%; height: 3px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 2px;
+            overflow: hidden;
+            display: none;
+        }
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent), var(--accent-light));
+            border-radius: 2px;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+
+        /* --- Right Panel (Info) --- */
+        .sidebar-right {
+            position: fixed; top: 64px; right: 16px; z-index: 90;
+            width: 280px;
+            display: flex; flex-direction: column; gap: 12px;
+            display: none;
+        }
+        .sidebar-right.visible { display: flex; }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+        .info-card {
+            background: rgba(255,255,255,0.03);
+            border-radius: 8px;
+            padding: 10px;
+        }
+        .info-card-label {
+            font-size: 10px; font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+        .info-card-value {
+            font-size: 16px; font-weight: 600;
+            color: var(--text-primary);
+        }
+        .info-card-value.accent { color: var(--accent-light); }
+
+        /* --- Elevation Readout --- */
+        .elevation-readout {
+            position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%);
+            z-index: 95;
+            padding: 8px 20px;
+            font-size: 14px; font-weight: 600;
+            display: none;
+            gap: 16px; align-items: center;
+        }
+        .elevation-readout.visible { display: flex; }
+        .elevation-readout .elev-value {
+            font-size: 20px; font-weight: 700;
+            color: var(--accent-light);
+        }
+        .elevation-readout .elev-label {
+            font-size: 11px; color: var(--text-muted);
+            text-transform: uppercase; letter-spacing: 0.5px;
+        }
+
+        /* --- Slope Legend --- */
+        .slope-legend {
+            display: none; gap: 8px; align-items: center;
+            font-size: 11px; margin-top: 8px;
+        }
+        .slope-legend.visible { display: flex; }
+        .slope-swatch {
+            width: 12px; height: 12px; border-radius: 3px;
+        }
+
+        /* --- Cross Section Chart --- */
+        .cross-section-panel {
+            position: fixed; bottom: 60px; left: 16px; right: 16px; z-index: 85;
+            max-width: 600px; margin: 0 auto;
+            display: none;
+        }
+        .cross-section-panel.visible { display: block; }
+        #crossSectionCanvas {
+            width: 100%; height: 120px;
+            border-radius: 8px;
+            background: rgba(0,0,0,0.3);
+        }
+
+        /* --- Minimap --- */
+        .minimap {
+            width: 100%; aspect-ratio: 1;
+            border-radius: 8px;
+            background: rgba(0,0,0,0.3);
+            position: relative;
+            overflow: hidden;
+            display: none;
+        }
+        .minimap.visible { display: block; }
+        .minimap img {
+            width: 100%; height: 100%;
+            object-fit: cover;
+            opacity: 0.7;
+        }
+        .minimap-marker {
+            position: absolute;
+            width: 8px; height: 8px;
+            background: var(--accent);
+            border: 2px solid white;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            transition: all 0.1s ease;
+            box-shadow: 0 0 8px var(--accent-glow);
+        }
+
+        /* --- Slider Controls --- */
+        .slider-group { margin-bottom: 10px; }
+        .slider-label {
+            display: flex; justify-content: space-between;
+            font-size: 11px; color: var(--text-secondary);
+            margin-bottom: 4px;
+        }
+        .slider-value { font-weight: 600; color: var(--accent-light); }
+        input[type="range"] {
+            -webkit-appearance: none; width: 100%;
+            height: 4px; border-radius: 2px;
+            background: rgba(255,255,255,0.1);
+            outline: none;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 14px; height: 14px;
+            border-radius: 50%;
+            background: var(--accent);
+            cursor: pointer;
+            border: 2px solid var(--bg-primary);
+            box-shadow: 0 0 6px var(--accent-glow);
+        }
+
+        /* --- Keyboard Shortcuts --- */
+        .shortcuts-overlay {
+            position: fixed; inset: 0; z-index: 200;
+            display: none; align-items: center; justify-content: center;
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(8px);
+        }
+        .shortcuts-overlay.visible { display: flex; }
+        .shortcuts-grid {
+            display: grid; grid-template-columns: auto auto;
+            gap: 6px 24px; font-size: 13px;
+        }
+        .kbd {
+            display: inline-flex; align-items: center; justify-content: center;
+            min-width: 28px; padding: 3px 8px;
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 5px;
+            font-family: monospace; font-size: 11px;
+        }
+
+        /* Smooth entrance animations */
+        @keyframes fadeSlideIn {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .glass-panel { animation: fadeSlideIn 0.4s ease-out; }
     </style>
 </head>
 <body>
-    <div id="controls">
-        <div>
-            <label style="font-size:0.9em;">Regular photo (relative height only):</label><br>
-            <input type="file" id="fileInput" accept="image/*">
+    <canvas id="renderCanvas"></canvas>
+
+    <!-- ===== TOP BAR ===== -->
+    <div class="top-bar">
+        <div class="logo">
+            <div class="logo-icon">🛰️</div>
+            <span>DepthWizard</span>
+            <span class="logo-badge">SIH 2026</span>
         </div>
-        <div style="margin-top:8px;">
-            <label style="font-size:0.9em;">Georeferenced GeoTIFF (real elevation in meters):</label><br>
-            <input type="file" id="geoFileInput" accept=".tif,.tiff">
+        <div class="top-bar-right">
+            <button class="btn btn-sm btn-icon" id="btnShortcuts" title="Keyboard Shortcuts">⌨️</button>
+            <button class="btn btn-sm btn-icon" id="btnResetCamera" title="Reset Camera" style="display:none;">🎯</button>
+            <button class="btn btn-sm" id="btnFlyMode" style="display:none;">🚁 First-Person</button>
         </div>
-        <button id="modeToggle" style="display:none; margin-top:8px;">Enter First-Person Mode</button>
-        <p id="status">Upload a satellite image to see its 3D terrain.</p>
-        <p id="elevationInfo" style="display:none; font-size:0.9em; color:#8f8;"></p>
-        <p id="hint" style="display:none; font-size:0.9em; color:#aaa;">WASD to move, mouse to look, Shift/Space for down/up, Esc to exit</p>
     </div>
 
+    <!-- ===== LEFT SIDEBAR ===== -->
+    <div class="sidebar-left">
+        <!-- Upload Panel -->
+        <div class="glass-panel">
+            <div class="panel-title">Upload Imagery</div>
+            <div class="upload-zone" id="uploadZoneRGB">
+                <input type="file" id="fileInputRGB" accept="image/*">
+                <div class="upload-icon">🖼️</div>
+                <div class="upload-label">RGB Image (PNG, JPG)</div>
+                <div class="upload-sublabel">Produces relative depth map</div>
+            </div>
+            <div style="height:8px;"></div>
+            <div class="upload-zone" id="uploadZoneGeo">
+                <input type="file" id="fileInputGeo" accept=".tif,.tiff">
+                <div class="upload-icon">🌍</div>
+                <div class="upload-label">GeoTIFF (Georeferenced)</div>
+                <div class="upload-sublabel">Produces absolute elevation in meters</div>
+            </div>
+            <div class="progress-container" id="progressContainer">
+                <div class="progress-bar" id="progressBar"></div>
+            </div>
+        </div>
+
+        <!-- Enhancement Controls -->
+        <div class="glass-panel" id="enhancePanel">
+            <div class="panel-title">Image Enhancement</div>
+            <div class="slider-group">
+                <div class="slider-label">
+                    <span>CLAHE Contrast</span>
+                    <span class="slider-value" id="claheValue">2.0</span>
+                </div>
+                <input type="range" id="claheSlider" min="0.5" max="6.0" step="0.1" value="2.0">
+            </div>
+            <div class="slider-group">
+                <div class="slider-label">
+                    <span>Sharpening</span>
+                    <span class="slider-value" id="sharpenValue">0.5</span>
+                </div>
+                <input type="range" id="sharpenSlider" min="0.0" max="1.5" step="0.1" value="0.5">
+            </div>
+            <div class="slider-group">
+                <div class="slider-label">
+                    <span>Dehaze</span>
+                    <span class="slider-value" id="dehazeValue">0.5</span>
+                </div>
+                <input type="range" id="dehazeSlider" min="0.0" max="1.0" step="0.05" value="0.5">
+            </div>
+        </div>
+
+        <!-- Visualization Controls -->
+        <div class="glass-panel" id="vizPanel" style="display:none;">
+            <div class="panel-title">Visualization</div>
+            <div class="btn-group" style="margin-bottom: 10px;">
+                <button class="btn btn-sm active" id="btnTexture">🖼️ Texture</button>
+                <button class="btn btn-sm" id="btnHeightmap">📊 Height</button>
+                <button class="btn btn-sm" id="btnSlope">📐 Slope</button>
+            </div>
+            <div class="slider-group">
+                <div class="slider-label">
+                    <span>Height Exaggeration</span>
+                    <span class="slider-value" id="exaggerationValue">2.5</span>
+                </div>
+                <input type="range" id="exaggerationSlider" min="0.5" max="10.0" step="0.5" value="2.5">
+            </div>
+            <div class="slope-legend" id="slopeLegend">
+                <span class="slope-swatch" style="background:var(--slope-flat);"></span> Flat
+                <span class="slope-swatch" style="background:var(--slope-moderate);"></span> Moderate
+                <span class="slope-swatch" style="background:var(--slope-steep);"></span> Steep
+            </div>
+
+            <div style="margin-top: 10px;">
+                <button class="btn btn-sm" id="btnCrossSection" style="width:100%;">📏 Cross Section (click 2 points)</button>
+            </div>
+        </div>
+
+        <!-- Minimap -->
+        <div class="glass-panel" id="minimapPanel" style="display:none;">
+            <div class="panel-title">Minimap</div>
+            <div class="minimap" id="minimap">
+                <img id="minimapImg" src="" alt="minimap">
+                <div class="minimap-marker" id="minimapMarker"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== RIGHT SIDEBAR ===== -->
+    <div class="sidebar-right" id="sidebarRight">
+        <div class="glass-panel">
+            <div class="panel-title">Terrain Info</div>
+            <div class="info-grid">
+                <div class="info-card">
+                    <div class="info-card-label">Type</div>
+                    <div class="info-card-value" id="infoTerrainType">—</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-card-label">Resolution</div>
+                    <div class="info-card-value" id="infoResolution">—</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-card-label">Min Elev</div>
+                    <div class="info-card-value accent" id="infoElevMin">—</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-card-label">Max Elev</div>
+                    <div class="info-card-value accent" id="infoElevMax">—</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-card-label">Fit a</div>
+                    <div class="info-card-value" id="infoFitA">—</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-card-label">Fit b</div>
+                    <div class="info-card-value" id="infoFitB">—</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== ELEVATION READOUT ===== -->
+    <div class="glass-panel elevation-readout" id="elevationReadout">
+        <div>
+            <div class="elev-label">Elevation</div>
+            <div class="elev-value" id="elevValue">—</div>
+        </div>
+        <div>
+            <div class="elev-label">Slope</div>
+            <div class="elev-value" id="slopeValue">—</div>
+        </div>
+        <div>
+            <div class="elev-label">Position</div>
+            <div class="elev-value" id="posValue" style="font-size:13px;">—</div>
+        </div>
+    </div>
+
+    <!-- ===== CROSS SECTION ===== -->
+    <div class="glass-panel cross-section-panel" id="crossSectionPanel">
+        <div class="panel-title" style="margin-bottom:6px;">Elevation Profile</div>
+        <canvas id="crossSectionCanvas"></canvas>
+    </div>
+
+    <!-- ===== STATUS BAR ===== -->
+    <div class="glass-panel status-bar" id="statusBar">
+        <div class="status-dot" id="statusDot"></div>
+        <div class="status-text" id="statusText">Ready — upload a satellite image to begin</div>
+    </div>
+
+    <!-- ===== KEYBOARD SHORTCUTS OVERLAY ===== -->
+    <div class="shortcuts-overlay" id="shortcutsOverlay">
+        <div class="glass-panel" style="max-width:400px;">
+            <div class="panel-title">Keyboard Shortcuts</div>
+            <div class="shortcuts-grid">
+                <span class="kbd">W A S D</span><span>Move camera</span>
+                <span class="kbd">Space</span><span>Fly up</span>
+                <span class="kbd">Shift</span><span>Fly down</span>
+                <span class="kbd">Mouse</span><span>Look around (first-person)</span>
+                <span class="kbd">Scroll</span><span>Zoom (orbit mode)</span>
+                <span class="kbd">Click</span><span>Query elevation</span>
+                <span class="kbd">F</span><span>Toggle first-person</span>
+                <span class="kbd">1 2 3</span><span>Texture / Height / Slope</span>
+                <span class="kbd">R</span><span>Reset camera</span>
+                <span class="kbd">Esc</span><span>Exit first-person / close</span>
+                <span class="kbd">?</span><span>Toggle this help</span>
+            </div>
+            <div style="text-align:center; margin-top:12px;">
+                <button class="btn btn-sm" onclick="document.getElementById('shortcutsOverlay').classList.remove('visible')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== THREE.JS ===== -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
     <script>
+    (function() {
+        'use strict';
+
+        // ========== SCENE SETUP ==========
         const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0a0e17);
+        scene.fog = new THREE.FogExp2(0x0a0e17, 0.015);
+
         const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-        camera.position.set(0, 8, 12);
+        camera.position.set(0, 10, 14);
 
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('renderCanvas'), antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
-        document.body.appendChild(renderer.domElement);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.0;
 
+        // Orbit controls
         const orbitControls = new THREE.OrbitControls(camera, renderer.domElement);
         orbitControls.target.set(0, 0, 0);
+        orbitControls.enableDamping = true;
+        orbitControls.dampingFactor = 0.08;
+        orbitControls.maxPolarAngle = Math.PI * 0.85;
 
+        // Fly controls
         const flyControls = new THREE.PointerLockControls(camera, document.body);
         let flyMode = false;
         const moveState = { forward: false, back: false, left: false, right: false, up: false, down: false };
-        const flySpeed = 6; // units per second
+        const flySpeed = 8;
         let lastFrameTime = performance.now();
 
-        const modeToggle = document.getElementById('modeToggle');
-        const hint = document.getElementById('hint');
+        // Lighting
+        const sunLight = new THREE.DirectionalLight(0xffeedd, 1.2);
+        sunLight.position.set(8, 15, 8);
+        sunLight.castShadow = true;
+        sunLight.shadow.mapSize.width = 2048;
+        sunLight.shadow.mapSize.height = 2048;
+        scene.add(sunLight);
 
-        modeToggle.addEventListener('click', () => {
-            if (!flyMode) {
-                flyControls.lock(); // browser will only allow this from a real user click, which this is
-            } else {
-                flyControls.unlock();
+        const fillLight = new THREE.DirectionalLight(0x8888ff, 0.3);
+        fillLight.position.set(-5, 5, -5);
+        scene.add(fillLight);
+
+        scene.add(new THREE.AmbientLight(0x404060, 0.5));
+
+        // Grid helper (subtle)
+        const gridHelper = new THREE.GridHelper(20, 40, 0x1a1a3a, 0x1a1a3a);
+        gridHelper.material.opacity = 0.3;
+        gridHelper.material.transparent = true;
+        scene.add(gridHelper);
+
+        // ========== STATE ==========
+        let terrainMesh = null;
+        let depthData = null;      // Float32 normalized 0-1 depth values
+        let depthWidth = 0;
+        let depthHeight = 0;
+        let originalUrl = null;
+        let isGeoTiff = false;
+        let elevationMin = 0;
+        let elevationMax = 1;
+        let currentHeightExaggeration = 2.5;
+        let currentViewMode = 'texture';   // 'texture' | 'height' | 'slope'
+        let crossSectionMode = false;
+        let crossSectionPoints = [];
+        let heightsArray = null;   // Smoothed heights used in the mesh
+        let meshSegX = 256, meshSegY = 256;  // increased for more detail
+        const MESH_SIZE = 10;
+
+        // ========== UI ELEMENTS ==========
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+
+        function setStatus(text, state = 'ready') {
+            statusText.textContent = text;
+            statusDot.className = 'status-dot' + (state === 'processing' ? ' processing' : state === 'error' ? ' error' : '');
+        }
+
+        function setProgress(pct) {
+            progressContainer.style.display = pct >= 0 ? 'block' : 'none';
+            progressBar.style.width = Math.max(0, Math.min(100, pct)) + '%';
+        }
+
+        // Slider bindings
+        function bindSlider(sliderId, valueId) {
+            const slider = document.getElementById(sliderId);
+            const value = document.getElementById(valueId);
+            slider.addEventListener('input', () => { value.textContent = slider.value; });
+        }
+        bindSlider('claheSlider', 'claheValue');
+        bindSlider('sharpenSlider', 'sharpenValue');
+        bindSlider('dehazeSlider', 'dehazeValue');
+
+        // Height exaggeration
+        document.getElementById('exaggerationSlider').addEventListener('input', (e) => {
+            document.getElementById('exaggerationValue').textContent = e.target.value;
+            currentHeightExaggeration = parseFloat(e.target.value);
+            if (heightsArray && terrainMesh) {
+                updateMeshHeights();
             }
         });
 
+        // ========== FLY MODE ==========
+        const btnFlyMode = document.getElementById('btnFlyMode');
+        btnFlyMode.addEventListener('click', () => {
+            if (!flyMode) { flyControls.lock(); } else { flyControls.unlock(); }
+        });
         flyControls.addEventListener('lock', () => {
             flyMode = true;
             orbitControls.enabled = false;
-            modeToggle.textContent = 'Exit First-Person Mode';
-            hint.style.display = 'block';
+            btnFlyMode.textContent = '🚶 Exit First-Person';
+            btnFlyMode.classList.add('active');
         });
-
         flyControls.addEventListener('unlock', () => {
             flyMode = false;
             orbitControls.enabled = true;
-            modeToggle.textContent = 'Enter First-Person Mode';
-            hint.style.display = 'none';
+            btnFlyMode.textContent = '🚁 First-Person';
+            btnFlyMode.classList.remove('active');
         });
 
         document.addEventListener('keydown', (e) => {
+            if (e.code === 'KeyF' && !e.ctrlKey && !e.metaKey) {
+                if (!flyMode) { flyControls.lock(); } else { flyControls.unlock(); }
+                return;
+            }
+            if (e.key === '?' || (e.key === '/' && e.shiftKey)) {
+                document.getElementById('shortcutsOverlay').classList.toggle('visible');
+                return;
+            }
+            if (e.code === 'KeyR' && !e.ctrlKey) { resetCamera(); return; }
+            if (e.code === 'Digit1') { setViewMode('texture'); return; }
+            if (e.code === 'Digit2') { setViewMode('height'); return; }
+            if (e.code === 'Digit3') { setViewMode('slope'); return; }
+            if (e.code === 'Escape') {
+                const so = document.getElementById('shortcutsOverlay');
+                if (so.classList.contains('visible')) { so.classList.remove('visible'); return; }
+            }
+
             if (!flyMode) return;
             if (e.code === 'KeyW') moveState.forward = true;
             if (e.code === 'KeyS') moveState.back = true;
             if (e.code === 'KeyA') moveState.left = true;
             if (e.code === 'KeyD') moveState.right = true;
-            if (e.code === 'Space') moveState.up = true;
+            if (e.code === 'Space') { moveState.up = true; e.preventDefault(); }
             if (e.code === 'ShiftLeft') moveState.down = true;
         });
         document.addEventListener('keyup', (e) => {
@@ -88,13 +720,422 @@
             if (e.code === 'ShiftLeft') moveState.down = false;
         });
 
-        const light = new THREE.DirectionalLight(0xffffff, 1);
-        light.position.set(5, 10, 5);
-        scene.add(light);
-        scene.add(new THREE.AmbientLight(0x888888));
+        // ========== CAMERA ==========
+        function resetCamera() {
+            camera.position.set(0, 10, 14);
+            orbitControls.target.set(0, 0, 0);
+        }
+        document.getElementById('btnResetCamera').addEventListener('click', resetCamera);
+        document.getElementById('btnShortcuts').addEventListener('click', () => {
+            document.getElementById('shortcutsOverlay').classList.toggle('visible');
+        });
 
-        let terrainMesh = null;
+        // ========== VIEW MODES ==========
+        function setViewMode(mode) {
+            currentViewMode = mode;
+            document.querySelectorAll('#vizPanel .btn-group .btn').forEach(b => b.classList.remove('active'));
+            if (mode === 'texture') document.getElementById('btnTexture').classList.add('active');
+            if (mode === 'height') document.getElementById('btnHeightmap').classList.add('active');
+            if (mode === 'slope') document.getElementById('btnSlope').classList.add('active');
 
+            document.getElementById('slopeLegend').classList.toggle('visible', mode === 'slope');
+
+            if (terrainMesh && heightsArray) updateMeshMaterial();
+        }
+        document.getElementById('btnTexture').addEventListener('click', () => setViewMode('texture'));
+        document.getElementById('btnHeightmap').addEventListener('click', () => setViewMode('height'));
+        document.getElementById('btnSlope').addEventListener('click', () => setViewMode('slope'));
+
+        // ========== DEPTH SAMPLING ==========
+        function sampleDepthSmooth(data, width, height, u, v) {
+            const x = u * (width - 1);
+            const y = v * (height - 1);
+            const x0 = Math.floor(x), x1 = Math.min(x0 + 1, width - 1);
+            const y0 = Math.floor(y), y1 = Math.min(y0 + 1, height - 1);
+            const fx = x - x0, fy = y - y0;
+            const getPixel = (px, py) => data[(py * width + px) * 4] / 255;
+            const top = getPixel(x0, y0) * (1 - fx) + getPixel(x1, y0) * fx;
+            const bottom = getPixel(x0, y1) * (1 - fx) + getPixel(x1, y1) * fx;
+            return top * (1 - fy) + bottom * fy;
+        }
+
+        function getImagePixels(imageUrl) {
+            return new Promise((resolve) => {
+                const img = new Image();
+                img.crossOrigin = 'anonymous';
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    resolve({ img, data: ctx.getImageData(0, 0, img.width, img.height) });
+                };
+                img.src = imageUrl;
+            });
+        }
+
+        // ========== BUILD TERRAIN ==========
+        function updateMeshHeights() {
+            if (!terrainMesh || !heightsArray) return;
+            const position = terrainMesh.geometry.attributes.position;
+            for (let i = 0; i < position.count; i++) {
+                position.setZ(i, heightsArray[i] * currentHeightExaggeration);
+            }
+            position.needsUpdate = true;
+            terrainMesh.geometry.computeVertexNormals();
+        }
+
+        function generateHeightmapTexture(heights, segX, segY) {
+            const canvas = document.createElement('canvas');
+            canvas.width = segX; canvas.height = segY;
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.createImageData(segX, segY);
+            // Color ramp: deep blue → cyan → green → yellow → red → white
+            const colorStops = [
+                [0.0, [10, 30, 80]],
+                [0.2, [20, 100, 180]],
+                [0.4, [30, 180, 120]],
+                [0.6, [180, 200, 50]],
+                [0.8, [220, 100, 30]],
+                [1.0, [255, 255, 255]]
+            ];
+
+            function interpolateColor(t) {
+                t = Math.max(0, Math.min(1, t));
+                for (let i = 0; i < colorStops.length - 1; i++) {
+                    if (t >= colorStops[i][0] && t <= colorStops[i + 1][0]) {
+                        const f = (t - colorStops[i][0]) / (colorStops[i + 1][0] - colorStops[i][0]);
+                        const c0 = colorStops[i][1], c1 = colorStops[i + 1][1];
+                        return [
+                            Math.round(c0[0] + (c1[0] - c0[0]) * f),
+                            Math.round(c0[1] + (c1[1] - c0[1]) * f),
+                            Math.round(c0[2] + (c1[2] - c0[2]) * f)
+                        ];
+                    }
+                }
+                return [255, 255, 255];
+            }
+
+            for (let i = 0; i < heights.length; i++) {
+                const [r, g, b] = interpolateColor(heights[i]);
+                imageData.data[i * 4] = r;
+                imageData.data[i * 4 + 1] = g;
+                imageData.data[i * 4 + 2] = b;
+                imageData.data[i * 4 + 3] = 255;
+            }
+            ctx.putImageData(imageData, 0, 0);
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.minFilter = THREE.LinearFilter;
+            tex.magFilter = THREE.LinearFilter;
+            return tex;
+        }
+
+        function generateSlopeTexture(heights, segX, segY) {
+            const canvas = document.createElement('canvas');
+            canvas.width = segX; canvas.height = segY;
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.createImageData(segX, segY);
+
+            for (let py = 0; py < segY; py++) {
+                for (let px = 0; px < segX; px++) {
+                    const i = py * segX + px;
+                    const h = heights[i] * currentHeightExaggeration;
+                    // Compute slope from neighbors
+                    let dx = 0, dy = 0;
+                    if (px > 0 && px < segX - 1) {
+                        dx = (heights[i + 1] - heights[i - 1]) * currentHeightExaggeration;
+                    }
+                    if (py > 0 && py < segY - 1) {
+                        dy = (heights[(py + 1) * segX + px] - heights[(py - 1) * segX + px]) * currentHeightExaggeration;
+                    }
+                    const slopeDeg = Math.atan(Math.sqrt(dx * dx + dy * dy) / (MESH_SIZE / segX)) * 180 / Math.PI;
+                    // Color: flat=green, moderate=yellow, steep=red
+                    let r, g, b;
+                    if (slopeDeg < 15) {
+                        const t = slopeDeg / 15;
+                        r = Math.round(34 + (234 - 34) * t);
+                        g = Math.round(211 + (179 - 211) * t);
+                        b = Math.round(153 + (8 - 153) * t);
+                    } else {
+                        const t = Math.min(1, (slopeDeg - 15) / 30);
+                        r = Math.round(234 + (239 - 234) * t);
+                        g = Math.round(179 + (68 - 179) * t);
+                        b = Math.round(8 + (68 - 8) * t);
+                    }
+                    imageData.data[i * 4] = r;
+                    imageData.data[i * 4 + 1] = g;
+                    imageData.data[i * 4 + 2] = b;
+                    imageData.data[i * 4 + 3] = 255;
+                }
+            }
+            ctx.putImageData(imageData, 0, 0);
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.minFilter = THREE.LinearFilter;
+            tex.magFilter = THREE.LinearFilter;
+            return tex;
+        }
+
+        let textureMaterial, heightMaterial, slopeMaterial;
+
+        function updateMeshMaterial() {
+            if (!terrainMesh || !heightsArray) return;
+            if (currentViewMode === 'texture' && textureMaterial) {
+                terrainMesh.material = textureMaterial;
+            } else if (currentViewMode === 'height') {
+                const heightTex = generateHeightmapTexture(heightsArray, meshSegX, meshSegY);
+                heightMaterial = new THREE.MeshStandardMaterial({ map: heightTex, side: THREE.DoubleSide });
+                terrainMesh.material = heightMaterial;
+            } else if (currentViewMode === 'slope') {
+                const slopeTex = generateSlopeTexture(heightsArray, meshSegX, meshSegY);
+                slopeMaterial = new THREE.MeshStandardMaterial({ map: slopeTex, side: THREE.DoubleSide });
+                terrainMesh.material = slopeMaterial;
+            }
+        }
+
+        async function buildTerrain(origUrl, depthUrl) {
+            setStatus('Building 3D terrain mesh...', 'processing');
+            setProgress(80);
+
+            const { data: dData } = await getImagePixels(depthUrl);
+            depthWidth = dData.width;
+            depthHeight = dData.height;
+
+            const geometry = new THREE.PlaneGeometry(MESH_SIZE, MESH_SIZE, meshSegX - 1, meshSegY - 1);
+            const position = geometry.attributes.position;
+
+            // Sample heights with bilinear interpolation
+            heightsArray = new Float32Array(position.count);
+            const margin = 0.03;
+            for (let i = 0; i < position.count; i++) {
+                const px = i % meshSegX;
+                const py = Math.floor(i / meshSegX);
+                const u = margin + (px / (meshSegX - 1)) * (1 - 2 * margin);
+                const v = margin + (py / (meshSegY - 1)) * (1 - 2 * margin);
+                heightsArray[i] = sampleDepthSmooth(dData.data, dData.width, dData.height, u, v);
+            }
+
+            // Smooth pass
+            const smoothed = new Float32Array(position.count);
+            for (let py = 0; py < meshSegY; py++) {
+                for (let px = 0; px < meshSegX; px++) {
+                    const i = py * meshSegX + px;
+                    let sum = heightsArray[i], count = 1;
+                    const neighbors = [[-1,0],[1,0],[0,-1],[0,1]];
+                    for (const [dx, dy] of neighbors) {
+                        const nx = px + dx, ny = py + dy;
+                        if (nx >= 0 && nx < meshSegX && ny >= 0 && ny < meshSegY) {
+                            sum += heightsArray[ny * meshSegX + nx];
+                            count++;
+                        }
+                    }
+                    smoothed[i] = sum / count;
+                }
+            }
+            heightsArray = smoothed;
+
+            for (let i = 0; i < position.count; i++) {
+                position.setZ(i, heightsArray[i] * currentHeightExaggeration);
+            }
+            geometry.computeVertexNormals();
+
+            // Texture
+            const texture = new THREE.TextureLoader().load(origUrl);
+            texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+            textureMaterial = new THREE.MeshStandardMaterial({
+                map: texture, side: THREE.DoubleSide,
+                roughness: 0.8, metalness: 0.0
+            });
+
+            if (terrainMesh) scene.remove(terrainMesh);
+            terrainMesh = new THREE.Mesh(geometry, textureMaterial);
+            terrainMesh.rotation.x = -Math.PI / 2;
+            terrainMesh.receiveShadow = true;
+            terrainMesh.castShadow = true;
+            scene.add(terrainMesh);
+
+            // Show controls
+            document.getElementById('vizPanel').style.display = 'block';
+            document.getElementById('minimapPanel').style.display = 'block';
+            document.getElementById('btnFlyMode').style.display = 'inline-flex';
+            document.getElementById('btnResetCamera').style.display = 'inline-flex';
+            document.getElementById('sidebarRight').classList.add('visible');
+
+            // Set minimap
+            const minimapDiv = document.getElementById('minimap');
+            minimapDiv.classList.add('visible');
+            document.getElementById('minimapImg').src = origUrl;
+
+            setProgress(-1);
+            setStatus('Ready — click terrain to query elevation, scroll to zoom', 'ready');
+            resetCamera();
+        }
+
+        // ========== RAYCASTING (Elevation Query) ==========
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        renderer.domElement.addEventListener('click', (e) => {
+            if (flyMode || !terrainMesh) return;
+
+            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObject(terrainMesh);
+
+            if (intersects.length > 0) {
+                const point = intersects[0].point;
+                const uv = intersects[0].uv;
+
+                if (crossSectionMode) {
+                    crossSectionPoints.push({ point: point.clone(), uv: uv.clone() });
+                    if (crossSectionPoints.length === 2) {
+                        drawCrossSection();
+                        crossSectionMode = false;
+                        document.getElementById('btnCrossSection').textContent = '📏 Cross Section (click 2 points)';
+                    }
+                    return;
+                }
+
+                // Get height value
+                let heightValue;
+                if (uv && heightsArray) {
+                    const px = Math.floor(uv.x * (meshSegX - 1));
+                    const py = Math.floor((1 - uv.y) * (meshSegY - 1));
+                    const idx = py * meshSegX + px;
+                    const rawH = heightsArray[idx] || 0;
+
+                    if (isGeoTiff) {
+                        heightValue = (elevationMin + rawH * (elevationMax - elevationMin)).toFixed(1) + 'm';
+                    } else {
+                        heightValue = (rawH * 100).toFixed(1) + '%';
+                    }
+
+                    // Compute slope at this point
+                    let dx = 0, dy = 0;
+                    if (px > 0 && px < meshSegX - 1) {
+                        dx = (heightsArray[idx + 1] - heightsArray[idx - 1]) * currentHeightExaggeration;
+                    }
+                    if (py > 0 && py < meshSegY - 1) {
+                        dy = (heightsArray[(py + 1) * meshSegX + px] - heightsArray[(py - 1) * meshSegX + px]) * currentHeightExaggeration;
+                    }
+                    const slopeDeg = Math.atan(Math.sqrt(dx * dx + dy * dy) / (MESH_SIZE / meshSegX)) * 180 / Math.PI;
+
+                    document.getElementById('elevValue').textContent = heightValue;
+                    document.getElementById('slopeValue').textContent = slopeDeg.toFixed(1) + '°';
+                    document.getElementById('posValue').textContent =
+                        `(${point.x.toFixed(2)}, ${point.z.toFixed(2)})`;
+                    document.getElementById('elevationReadout').classList.add('visible');
+                }
+            }
+        });
+
+        // ========== CROSS SECTION ==========
+        document.getElementById('btnCrossSection').addEventListener('click', () => {
+            crossSectionMode = !crossSectionMode;
+            crossSectionPoints = [];
+            if (crossSectionMode) {
+                document.getElementById('btnCrossSection').textContent = '📏 Click point 1 on terrain...';
+                document.getElementById('crossSectionPanel').classList.remove('visible');
+            } else {
+                document.getElementById('btnCrossSection').textContent = '📏 Cross Section (click 2 points)';
+            }
+        });
+
+        function drawCrossSection() {
+            const canvas = document.getElementById('crossSectionCanvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = canvas.offsetWidth * 2;
+            canvas.height = canvas.offsetHeight * 2;
+            ctx.scale(2, 2);
+            const w = canvas.offsetWidth, h = canvas.offsetHeight;
+
+            const p1 = crossSectionPoints[0].uv;
+            const p2 = crossSectionPoints[1].uv;
+            const numSamples = 100;
+            const elevations = [];
+
+            for (let i = 0; i <= numSamples; i++) {
+                const t = i / numSamples;
+                const u = p1.x + (p2.x - p1.x) * t;
+                const v = p1.y + (p2.y - p1.y) * t;
+                const px = Math.floor(u * (meshSegX - 1));
+                const py = Math.floor((1 - v) * (meshSegY - 1));
+                const idx = py * meshSegX + px;
+                let elev = heightsArray ? (heightsArray[Math.max(0, Math.min(idx, heightsArray.length - 1))] || 0) : 0;
+                if (isGeoTiff) {
+                    elev = elevationMin + elev * (elevationMax - elevationMin);
+                } else {
+                    elev = elev * 100;
+                }
+                elevations.push(elev);
+            }
+
+            const eMin = Math.min(...elevations), eMax = Math.max(...elevations);
+            const padding = { top: 10, bottom: 20, left: 40, right: 10 };
+            const plotW = w - padding.left - padding.right;
+            const plotH = h - padding.top - padding.bottom;
+
+            // Background
+            ctx.fillStyle = 'rgba(0,0,0,0.3)';
+            ctx.fillRect(0, 0, w, h);
+
+            // Grid
+            ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+            ctx.lineWidth = 0.5;
+            for (let i = 0; i <= 4; i++) {
+                const y = padding.top + (plotH / 4) * i;
+                ctx.beginPath(); ctx.moveTo(padding.left, y); ctx.lineTo(w - padding.right, y); ctx.stroke();
+            }
+
+            // Fill under curve
+            const gradient = ctx.createLinearGradient(0, padding.top, 0, h - padding.bottom);
+            gradient.addColorStop(0, 'rgba(99, 102, 241, 0.4)');
+            gradient.addColorStop(1, 'rgba(99, 102, 241, 0.02)');
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.moveTo(padding.left, h - padding.bottom);
+            for (let i = 0; i <= numSamples; i++) {
+                const x = padding.left + (i / numSamples) * plotW;
+                const y = padding.top + plotH * (1 - (elevations[i] - eMin) / (eMax - eMin + 1e-8));
+                ctx.lineTo(x, y);
+            }
+            ctx.lineTo(padding.left + plotW, h - padding.bottom);
+            ctx.closePath(); ctx.fill();
+
+            // Line
+            ctx.strokeStyle = '#818cf8';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            for (let i = 0; i <= numSamples; i++) {
+                const x = padding.left + (i / numSamples) * plotW;
+                const y = padding.top + plotH * (1 - (elevations[i] - eMin) / (eMax - eMin + 1e-8));
+                i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+
+            // Labels
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '10px Inter';
+            ctx.textAlign = 'right';
+            const unit = isGeoTiff ? 'm' : '%';
+            ctx.fillText(eMax.toFixed(1) + unit, padding.left - 4, padding.top + 10);
+            ctx.fillText(eMin.toFixed(1) + unit, padding.left - 4, h - padding.bottom);
+
+            document.getElementById('crossSectionPanel').classList.add('visible');
+        }
+
+        // ========== MINIMAP UPDATE ==========
+        function updateMinimap() {
+            if (!terrainMesh) return;
+            const marker = document.getElementById('minimapMarker');
+            const camX = (camera.position.x / (MESH_SIZE / 2) + 1) / 2 * 100;
+            const camZ = (camera.position.z / (MESH_SIZE / 2) + 1) / 2 * 100;
+            marker.style.left = Math.max(0, Math.min(100, camX)) + '%';
+            marker.style.top = Math.max(0, Math.min(100, camZ)) + '%';
+        }
+
+        // ========== ANIMATION ==========
         function animate() {
             requestAnimationFrame(animate);
             const now = performance.now();
@@ -112,6 +1153,7 @@
             } else {
                 orbitControls.update();
             }
+            updateMinimap();
             renderer.render(scene, camera);
         }
         animate();
@@ -122,184 +1164,116 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
 
-        // --- Read a File/Blob into pixel data via a hidden canvas ---
-        function getImagePixels(imageUrl) {
-            return new Promise((resolve) => {
-                const img = new Image();
-                img.onload = () => {
-                    const canvas = document.createElement('canvas');
-                    canvas.width = img.width;
-                    canvas.height = img.height;
-                    const ctx = canvas.getContext('2d');
-                    ctx.drawImage(img, 0, 0);
-                    resolve({ img, data: ctx.getImageData(0, 0, img.width, img.height) });
-                };
-                img.src = imageUrl;
-            });
-        }
-
-        // Sample the depth map at (x,y) with bilinear interpolation for smoother results
-        // than just picking the single nearest pixel
-        function sampleDepthSmooth(depthData, u, v) {
-            const x = u * (depthData.width - 1);
-            const y = v * (depthData.height - 1);
-            const x0 = Math.floor(x), x1 = Math.min(x0 + 1, depthData.width - 1);
-            const y0 = Math.floor(y), y1 = Math.min(y0 + 1, depthData.height - 1);
-            const fx = x - x0, fy = y - y0;
-
-            const getPixel = (px, py) => depthData.data[(py * depthData.width + px) * 4] / 255;
-            const top = getPixel(x0, y0) * (1 - fx) + getPixel(x1, y0) * fx;
-            const bottom = getPixel(x0, y1) * (1 - fx) + getPixel(x1, y1) * fx;
-            return top * (1 - fy) + bottom * fy;
-        }
-
-        async function buildTerrain(originalUrl, depthUrl) {
-            const status = document.getElementById('status');
-            status.textContent = 'Building 3D terrain...';
-
-            const { data: depthData } = await getImagePixels(depthUrl);
-            // Higher resolution mesh - more detail, still fast enough for a browser
-            const segmentsX = 200, segmentsY = 200;
-
-            const geometry = new THREE.PlaneGeometry(10, 10, segmentsX - 1, segmentsY - 1);
-            const position = geometry.attributes.position;
-
-            // First pass: sample heights with bilinear interpolation (smoother than raw pixels)
-            const heights = new Float32Array(position.count);
-            const margin = 0.04; // skip the outer ~4% of the depth map, where tile-seam artifacts live
-            for (let i = 0; i < position.count; i++) {
-                const px = i % segmentsX;
-                const py = Math.floor(i / segmentsX);
-                const u = margin + (px / (segmentsX - 1)) * (1 - 2 * margin);
-                const v = margin + (py / (segmentsY - 1)) * (1 - 2 * margin);
-                heights[i] = sampleDepthSmooth(depthData, u, v);
-            }
-
-            // Second pass: light smoothing - average each point with its immediate neighbors
-            // to soften sharp jumps (like tile-seam artifacts) without losing real shape
-            const smoothed = new Float32Array(position.count);
-            for (let py = 0; py < segmentsY; py++) {
-                for (let px = 0; px < segmentsX; px++) {
-                    const i = py * segmentsX + px;
-                    let sum = heights[i], count = 1;
-                    const neighbors = [[-1,0],[1,0],[0,-1],[0,1]];
-                    for (const [dx, dy] of neighbors) {
-                        const nx = px + dx, ny = py + dy;
-                        if (nx >= 0 && nx < segmentsX && ny >= 0 && ny < segmentsY) {
-                            sum += heights[ny * segmentsX + nx];
-                            count++;
-                        }
-                    }
-                    smoothed[i] = sum / count;
-                }
-            }
-
-            for (let i = 0; i < position.count; i++) {
-                position.setZ(i, smoothed[i] * 2.5);
-            }
-            geometry.computeVertexNormals();
-
-            const texture = new THREE.TextureLoader().load(originalUrl);
-            const material = new THREE.MeshStandardMaterial({ map: texture, side: THREE.DoubleSide });
-
-            if (terrainMesh) scene.remove(terrainMesh);
-            terrainMesh = new THREE.Mesh(geometry, material);
-            terrainMesh.rotation.x = -Math.PI / 2;
-            scene.add(terrainMesh);
-
-            status.textContent = 'Done. Drag to orbit, scroll to zoom.';
-            document.getElementById('modeToggle').style.display = 'inline-block';
-            camera.position.set(0, 8, 12); // reset camera to a sensible starting point above the terrain
-        }
-    // --- Handle GeoTIFF upload: call the absolute-elevation endpoint ---
-        document.getElementById('geoFileInput').addEventListener('change', async (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-
-            const status = document.getElementById('status');
-            const elevationInfo = document.getElementById('elevationInfo');
-            status.textContent = 'Uploading GeoTIFF and computing real elevation (this takes a bit longer)...';
-            elevationInfo.style.display = 'none';
-
-            const formData = new FormData();
-            formData.append('file', file);
-
-            try {
-                // Get a browser-displayable PNG version of the GeoTIFF for use as the texture
-                const previewResponse = await fetch('/geotiff-preview', {
-                    method: 'POST',
-                    body: formData
-                });
-                const previewBlob = await previewResponse.blob();
-                const originalUrl = URL.createObjectURL(previewBlob);
-
-                const response = await fetch('/predict-elevation-geotiff', {
-                    method: 'POST',
-                    body: formData
-                });
-                if (!response.ok) throw new Error(`Server returned ${response.status}`);
-
-                // Real elevation values AND honest accuracy metrics, computed server-side
-                const fitParams = response.headers.get('X-Fit-Params') || '';
-                const elevMin = response.headers.get('X-Elevation-Min');
-                const elevMax = response.headers.get('X-Elevation-Max');
-                const rmse = response.headers.get('X-RMSE');
-                const mae = response.headers.get('X-MAE');
-                const correlation = response.headers.get('X-Correlation');
-                const dsmBlob = await response.blob();
-
-                elevationInfo.innerHTML =
-                    `Real elevation range: ${elevMin}m to ${elevMax}m (fit: ${fitParams})<br>` +
-                    `Validated against SRTM reference data (held-out test): RMSE ${rmse}m, MAE ${mae}m, correlation ${correlation}`;
-                elevationInfo.style.display = 'block';
-
-                // For the 3D view, we still need a depth-map-style image to build the mesh from -
-                // reuse the same visual pipeline as the regular upload, since the DSM's actual
-                // shape matches what /predict-depth would show for this same image, just rescaled.
-                const depthResponse = await fetch('/predict-depth', {
-                    method: 'POST',
-                    body: formData
-                });
-                const depthBlob = await depthResponse.blob();
-                const depthUrl = URL.createObjectURL(depthBlob);
-
-                await buildTerrain(originalUrl, depthUrl);
-                status.textContent = 'Done. This terrain has real elevation data attached (see above).';
-            } catch (err) {
-                status.textContent = 'Error: ' + err.message + ' (is the backend server running?)';
-                console.error(err);
-            }
+        // ========== UPLOAD HANDLERS ==========
+        // Drag-and-drop visual feedback
+        ['uploadZoneRGB', 'uploadZoneGeo'].forEach(id => {
+            const zone = document.getElementById(id);
+            zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('drag-over'); });
+            zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+            zone.addEventListener('drop', () => zone.classList.remove('drag-over'));
         });
 
-        // --- Handle file upload: call the backend, then build terrain from the result ---
-        document.getElementById('fileInput').addEventListener('change', async (e) => {
+        // RGB Upload
+        document.getElementById('fileInputRGB').addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (!file) return;
 
-            const status = document.getElementById('status');
-            status.textContent = 'Uploading and running depth model (this may take a moment)...';
-
-            const originalUrl = URL.createObjectURL(file);
+            isGeoTiff = false;
+            setStatus('Uploading & running depth model...', 'processing');
+            setProgress(20);
+            originalUrl = URL.createObjectURL(file);
 
             const formData = new FormData();
             formData.append('file', file);
+            formData.append('clahe_clip', document.getElementById('claheSlider').value);
+            formData.append('sharpen_strength', document.getElementById('sharpenSlider').value);
+            formData.append('dehaze_strength', document.getElementById('dehazeSlider').value);
 
             try {
-                const response = await fetch('/predict-depth', {
+                setProgress(40);
+                const response = await fetch(`/predict-depth?clahe_clip=${document.getElementById('claheSlider').value}&sharpen_strength=${document.getElementById('sharpenSlider').value}&dehaze_strength=${document.getElementById('dehazeSlider').value}`, {
                     method: 'POST',
-                    body: formData
+                    body: formData,
                 });
                 if (!response.ok) throw new Error(`Server returned ${response.status}`);
+                setProgress(70);
 
                 const depthBlob = await response.blob();
                 const depthUrl = URL.createObjectURL(depthBlob);
 
+                document.getElementById('infoTerrainType').textContent = 'RGB';
+                document.getElementById('infoResolution').textContent = '—';
+                document.getElementById('infoElevMin').textContent = '—';
+                document.getElementById('infoElevMax').textContent = '—';
+                document.getElementById('infoFitA').textContent = '—';
+                document.getElementById('infoFitB').textContent = '—';
+
                 await buildTerrain(originalUrl, depthUrl);
             } catch (err) {
-                status.textContent = 'Error: ' + err.message + ' (is the backend server running?)';
-                console.error(err);
+                setStatus('Error: ' + err.message, 'error');
+                setProgress(-1);
             }
         });
+
+        // GeoTIFF Upload
+        document.getElementById('fileInputGeo').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            isGeoTiff = true;
+            setStatus('Uploading GeoTIFF & computing absolute elevation...', 'processing');
+            setProgress(10);
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                // Get preview PNG
+                setProgress(20);
+                const previewResp = await fetch('/geotiff-preview', { method: 'POST', body: formData });
+                const previewBlob = await previewResp.blob();
+                originalUrl = URL.createObjectURL(previewBlob);
+
+                // Get elevation DSM
+                setProgress(40);
+                const params = `?clahe_clip=${document.getElementById('claheSlider').value}&sharpen_strength=${document.getElementById('sharpenSlider').value}&dehaze_strength=${document.getElementById('dehazeSlider').value}`;
+                const elevResp = await fetch('/predict-elevation-geotiff' + params, { method: 'POST', body: formData });
+                if (!elevResp.ok) {
+                    const err = await elevResp.json().catch(() => ({}));
+                    throw new Error(err.error || `Server returned ${elevResp.status}`);
+                }
+                setProgress(60);
+
+                const fitParams = elevResp.headers.get('X-Fit-Params') || '';
+                elevationMin = parseFloat(elevResp.headers.get('X-Elevation-Min') || '0');
+                elevationMax = parseFloat(elevResp.headers.get('X-Elevation-Max') || '1');
+                const terrainType = elevResp.headers.get('X-Terrain-Type') || '—';
+
+                document.getElementById('infoTerrainType').textContent = terrainType;
+                document.getElementById('infoResolution').textContent = 'GeoTIFF';
+                document.getElementById('infoElevMin').textContent = elevationMin.toFixed(1) + 'm';
+                document.getElementById('infoElevMax').textContent = elevationMax.toFixed(1) + 'm';
+                const fitMatch = fitParams.match(/a=([\d.\-]+),b=([\d.\-]+)/);
+                if (fitMatch) {
+                    document.getElementById('infoFitA').textContent = parseFloat(fitMatch[1]).toFixed(3);
+                    document.getElementById('infoFitB').textContent = parseFloat(fitMatch[2]).toFixed(1);
+                }
+
+                // Get depth map for 3D view
+                setProgress(75);
+                const depthResp = await fetch('/predict-depth' + params, { method: 'POST', body: formData });
+                const depthBlob = await depthResp.blob();
+                const depthUrl = URL.createObjectURL(depthBlob);
+
+                await buildTerrain(originalUrl, depthUrl);
+                setStatus(`Terrain loaded — real elevation: ${elevationMin.toFixed(1)}m to ${elevationMax.toFixed(1)}m (${terrainType})`, 'ready');
+            } catch (err) {
+                setStatus('Error: ' + err.message, 'error');
+                setProgress(-1);
+            }
+        });
+
+    })();
     </script>
 </body>
 </html>

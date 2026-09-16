@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, Query
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
@@ -6,8 +6,11 @@ import numpy as np
 import io
 
 from tile_and_stitch import tile_image, stitch_tiles
+import torch
 from transformers import pipeline
 from model_config import MODEL_ID
+from enhance import enhance_satellite_image
+from terrain_classifier import classify_terrain, get_calibration_strategy
 
 import tempfile
 import os
@@ -22,13 +25,14 @@ app.add_middleware(
     allow_origins=["*"],  # fine for local dev; restrict this before any real deployment
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Fit-Params", "X-Elevation-Min", "X-Elevation-Max", "X-RMSE", "X-MAE", "X-Correlation"],
+    expose_headers=["X-Fit-Params", "X-Elevation-Min", "X-Elevation-Max"],
 )
 # Load the model ONCE when the server starts, not on every request
 # (loading it per-request would make every call painfully slow)
 print("Loading depth model at startup...")
-depth_pipe = pipeline(task="depth-estimation", model=MODEL_ID)
-print("Model ready.")
+device = 0 if torch.cuda.is_available() else -1
+depth_pipe = pipeline(task="depth-estimation", model=MODEL_ID, device=device)
+print(f"Model ready on device: {'GPU' if device == 0 else 'CPU'}")
 
 
 @app.get("/health")
@@ -36,21 +40,14 @@ def health_check():
     return {"status": "ok", "message": "Depth backend is running"}
 
 
-@app.post("/predict-depth")
-async def predict_depth(file: UploadFile = File(...)):
-    # Read the uploaded image
-    contents = await file.read()
-    try:
-        image = Image.open(io.BytesIO(contents)).convert("RGB")
-    except Exception:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "Could not read this as an image. Upload a valid JPG or PNG file."}
-        )
-    w, h = image.size
+TILE_SIZE = 512
+TILE_OVERLAP = 192  # increased from 128 for smoother seams
 
-    # Tile, run model on each tile, stitch back together
-    tiles = tile_image(image, tile_size=512, overlap=64)
+
+def _run_tiled_depth(image):
+    """Shared tile-and-stitch logic used by all depth endpoints."""
+    w, h = image.size
+    tiles = tile_image(image, tile_size=TILE_SIZE, overlap=TILE_OVERLAP)
     tile_depths = []
     positions = []
     for tile, x, y in tiles:
@@ -58,42 +55,109 @@ async def predict_depth(file: UploadFile = File(...)):
         depth_arr = np.array(result["depth"]).astype(np.float32)
         tile_depths.append(depth_arr)
         positions.append((x, y))
+    return stitch_tiles(tile_depths, positions, (w, h), tile_size=TILE_SIZE, overlap=TILE_OVERLAP)
 
-    stitched = stitch_tiles(tile_depths, positions, (w, h), tile_size=512, overlap=64)
+
+def _enhance_image(contents, clahe_clip, sharpen_strength, dehaze_strength):
+    """Read uploaded bytes, enhance, return PIL image."""
+    image = Image.open(io.BytesIO(contents)).convert("RGB")
+    return enhance_satellite_image(
+        image, clahe_clip=clahe_clip,
+        sharpen_strength=sharpen_strength, dehaze_strength=dehaze_strength,
+    )
+
+
+@app.post("/predict-depth")
+async def predict_depth(
+    file: UploadFile = File(...),
+    clahe_clip: float = Query(2.0, description="CLAHE clip limit (higher = more contrast)"),
+    sharpen_strength: float = Query(0.5, description="Edge sharpening intensity (0.3-1.0)"),
+    dehaze_strength: float = Query(0.5, description="Atmospheric haze removal (0.3-0.7)"),
+):
+    contents = await file.read()
+    image = _enhance_image(contents, clahe_clip, sharpen_strength, dehaze_strength)
+    stitched = _run_tiled_depth(image)
 
     # Normalize to viewable 0-255 PNG
     stitched_norm = (255 * (stitched - stitched.min()) / (stitched.max() - stitched.min() + 1e-8)).astype(np.uint8)
     output_image = Image.fromarray(stitched_norm)
 
-    # Send the image back as the HTTP response, no temp file needed
     buf = io.BytesIO()
     output_image.save(buf, format="PNG")
     buf.seek(0)
     return StreamingResponse(buf, media_type="image/png")
 
+
+@app.post("/predict-depth-data")
+async def predict_depth_data(
+    file: UploadFile = File(...),
+    clahe_clip: float = Query(2.0),
+    sharpen_strength: float = Query(0.5),
+    dehaze_strength: float = Query(0.5),
+):
+    """Returns raw float32 depth values as JSON for accurate height querying
+    in the frontend. Also returns dimensions for reconstruction."""
+    contents = await file.read()
+    image = _enhance_image(contents, clahe_clip, sharpen_strength, dehaze_strength)
+    stitched = _run_tiled_depth(image)
+    w, h = image.size
+
+    # Normalize to 0-1 range
+    d_min, d_max = float(stitched.min()), float(stitched.max())
+    normalized = ((stitched - d_min) / (d_max - d_min + 1e-8)).astype(np.float32)
+
+    # Also return the 8-bit PNG for texture
+    stitched_norm = (normalized * 255).astype(np.uint8)
+    output_image = Image.fromarray(stitched_norm)
+    buf = io.BytesIO()
+    output_image.save(buf, format="PNG")
+    depth_png_b64 = __import__('base64').b64encode(buf.getvalue()).decode('ascii')
+
+    return JSONResponse(content={
+        "width": w,
+        "height": h,
+        "depth_min": d_min,
+        "depth_max": d_max,
+        "depth_png_base64": depth_png_b64,
+        "depth_values": normalized.tolist(),
+    })
+
 @app.post("/predict-elevation-geotiff")
-async def predict_elevation_geotiff(file: UploadFile = File(...)):
+async def predict_elevation_geotiff(
+    file: UploadFile = File(...),
+    clahe_clip: float = Query(2.0, description="CLAHE clip limit"),
+    sharpen_strength: float = Query(0.5, description="Edge sharpening intensity"),
+    dehaze_strength: float = Query(0.5, description="Haze removal intensity"),
+):
     """Takes a georeferenced GeoTIFF, returns an absolute-elevation DSM GeoTIFF (real meters)."""
     contents = await file.read()
 
     from calibration_utils import NotGeoreferencedError
     try:
-        img_rgb, transform, crs, width, height = load_geotiff_from_bytes(contents)
+        img_rgb, transform, crs, width, height, valid_mask = load_geotiff_from_bytes(contents)
     except NotGeoreferencedError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
     except Exception as e:
         return JSONResponse(status_code=400, content={"error": f"Could not read this file: {str(e)}"})
 
-    image = Image.fromarray(img_rgb)
+    image = enhance_satellite_image(
+        Image.fromarray(img_rgb), clahe_clip=clahe_clip,
+        sharpen_strength=sharpen_strength, dehaze_strength=dehaze_strength,
+    )
 
-    # Run the same depth model already loaded at startup
-    result = depth_pipe(image)
-    relative_depth = np.array(result["depth"]).astype(np.float64)
+    # Classify terrain and pick calibration strategy
+    terrain_type = classify_terrain(image)
+    strategy = get_calibration_strategy(terrain_type)
+    print(f"Detected terrain: {terrain_type}, strategy: {strategy}")
 
-    # Get real SRTM elevation for this exact area and fit the correction
+    relative_depth = _run_tiled_depth(image).astype(np.float64)
+    relative_depth[~valid_mask] = np.nan
+
+    # Get real SRTM elevation and calibrate with terrain-adaptive strategy
     srtm_grid = get_srtm_grid(transform, width, height)
-    absolute_dsm, a, b, metrics = calibrate_to_absolute(relative_depth, srtm_grid)
-
+    absolute_dsm, a, b = calibrate_to_absolute(
+        relative_depth, srtm_grid, transform=transform, strategy=strategy
+    )
     elevation_min = float(np.nanmin(absolute_dsm))
     elevation_max = float(np.nanmax(absolute_dsm))
 
@@ -114,9 +178,7 @@ async def predict_elevation_geotiff(file: UploadFile = File(...)):
             "X-Fit-Params": f"a={a:.4f},b={b:.4f}",
             "X-Elevation-Min": f"{elevation_min:.2f}",
             "X-Elevation-Max": f"{elevation_max:.2f}",
-            "X-RMSE": f"{metrics['rmse']:.2f}",
-            "X-MAE": f"{metrics['mae']:.2f}",
-            "X-Correlation": f"{metrics['correlation']:.3f}"
+            "X-Terrain-Type": terrain_type,
         }
     )
 
@@ -124,10 +186,7 @@ async def predict_elevation_geotiff(file: UploadFile = File(...)):
 async def geotiff_preview(file: UploadFile = File(...)):
     """Converts a GeoTIFF's RGB content to a PNG the browser can actually display."""
     contents = await file.read()
-    try:
-        img_rgb, _, _, _, _ = load_geotiff_from_bytes(contents)
-    except Exception as e:
-        return JSONResponse(status_code=400, content={"error": f"Could not read this file: {str(e)}"})
+    img_rgb, _, _, _, _, _ = load_geotiff_from_bytes(contents)
     image = Image.fromarray(img_rgb)
 
     buf = io.BytesIO()

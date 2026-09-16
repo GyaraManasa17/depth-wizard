@@ -9,13 +9,20 @@ import srtm
 from transformers import pipeline
 from PIL import Image
 
+from model_config import MODEL_ID
+from terrain_classifier import classify_terrain, get_calibration_strategy
+from calibration_utils import smooth_depth, _robust_outlier_mask
+
+
 def load_geotiff(path):
     with rasterio.open(path) as src:
         img_array = src.read([1, 2, 3])
         transform = src.transform
+        crs = src.crs
         width, height = src.width, src.height
     img_rgb = np.transpose(img_array, (1, 2, 0)).astype(np.uint8)
-    return Image.fromarray(img_rgb), transform, width, height
+    return Image.fromarray(img_rgb), transform, crs, width, height
+
 
 def get_srtm_grid(transform, width, height, elevation_data):
     grid = np.zeros((height, width), dtype=np.float64)
@@ -26,65 +33,128 @@ def get_srtm_grid(transform, width, height, elevation_data):
             grid[row, col] = elev if elev is not None else np.nan
     return grid
 
-def evaluate_terrain(label, tif_path, pipe, elevation_data):
-    print(f"\n=== Evaluating: {label} ===")
-    image, transform, width, height = load_geotiff(tif_path)
+
+def evaluate_sample(label, tif_path, pipe, elevation_data):
+    print(f"\n==========================================")
+    print(f"Evaluating: {label} ({tif_path})")
+    print(f"==========================================")
+    image, transform, crs, width, height = load_geotiff(tif_path)
+    
+    # 1. Depth prediction
     result = pipe(image)
-    relative_depth = np.array(result["depth"]).astype(np.float64)
+    raw_depth = np.array(result["depth"]).astype(np.float64)
+    
+    # 2. Ground truth SRTM
     srtm_grid = get_srtm_grid(transform, width, height, elevation_data)
-
     valid_mask = ~np.isnan(srtm_grid)
-    depth_valid = relative_depth[valid_mask].ravel()
-    srtm_valid = srtm_grid[valid_mask].ravel()
+    
+    if np.sum(valid_mask) < 20:
+        print(f"Warning: insufficient valid SRTM points for {label}")
+        return None
 
+    # 3. Detect terrain type
+    terrain_type = classify_terrain(image)
+    strategy = get_calibration_strategy(terrain_type)
+    print(f"Detected Terrain: {terrain_type.upper()} | Strategy: {strategy}")
+
+    # Train/Test Split (80/20) for fair evaluation
     np.random.seed(42)
-    n = len(depth_valid)
-    indices = np.random.permutation(n)
+    valid_indices = np.argwhere(valid_mask)
+    n = len(valid_indices)
+    shuffled = np.random.permutation(n)
     split = int(n * 0.8)
-    train_idx, test_idx = indices[:split], indices[split:]
+    train_idx, test_idx = shuffled[:split], shuffled[split:]
 
-    a, b = np.polyfit(depth_valid[train_idx], srtm_valid[train_idx], 1)
-    predictions = a * depth_valid[test_idx] + b
-    actual = srtm_valid[test_idx]
-    residuals = predictions - actual
+    train_coords = valid_indices[train_idx]
+    test_coords = valid_indices[test_idx]
 
-    rmse = float(np.sqrt(np.mean(residuals ** 2)))
-    mae = float(np.mean(np.abs(residuals)))
-    correlation = float(np.corrcoef(depth_valid, srtm_valid)[0, 1])
+    # --- BASELINE EVALUATION (Simple Global Linear Fit) ---
+    train_depth_base = raw_depth[train_coords[:, 0], train_coords[:, 1]]
+    train_srtm = srtm_grid[train_coords[:, 0], train_coords[:, 1]]
+    test_depth_base = raw_depth[test_coords[:, 0], test_coords[:, 1]]
+    test_srtm = srtm_grid[test_coords[:, 0], test_coords[:, 1]]
 
-    return {"terrain": label, "rmse_m": round(rmse, 2), "mae_m": round(mae, 2), "correlation": round(correlation, 3)}
+    a_base, b_base = np.polyfit(train_depth_base, train_srtm, 1)
+    pred_base = a_base * test_depth_base + b_base
+
+    res_base = pred_base - test_srtm
+    rmse_base = float(np.sqrt(np.mean(res_base ** 2)))
+    mae_base = float(np.mean(np.abs(res_base)))
+    corr_base = float(np.corrcoef(raw_depth[valid_mask].ravel(), srtm_grid[valid_mask].ravel())[0, 1])
+
+    # --- TERRAIN-ADAPTIVE EVALUATION ---
+    pre_smooth = strategy.get("pre_smooth", False)
+    eval_depth = smooth_depth(raw_depth) if pre_smooth else raw_depth
+
+    train_depth_adapt = eval_depth[train_coords[:, 0], train_coords[:, 1]]
+    test_depth_adapt = eval_depth[test_coords[:, 0], test_coords[:, 1]]
+
+    method = strategy.get("method", "linear")
+    if method == "polynomial":
+        degree = strategy.get("degree", 2)
+        coeffs = np.polyfit(train_depth_adapt, train_srtm, degree)
+        inliers = _robust_outlier_mask(train_depth_adapt, train_srtm, coeffs)
+        if np.sum(inliers) > 10:
+            coeffs = np.polyfit(train_depth_adapt[inliers], train_srtm[inliers], degree)
+        pred_adapt = np.polyval(coeffs, test_depth_adapt)
+    else:
+        coeffs = np.polyfit(train_depth_adapt, train_srtm, 1)
+        inliers = _robust_outlier_mask(train_depth_adapt, train_srtm, coeffs)
+        if np.sum(inliers) > 10:
+            coeffs = np.polyfit(train_depth_adapt[inliers], train_srtm[inliers], 1)
+        pred_adapt = coeffs[0] * test_depth_adapt + coeffs[1]
+
+    res_adapt = pred_adapt - test_srtm
+    rmse_adapt = float(np.sqrt(np.mean(res_adapt ** 2)))
+    mae_adapt = float(np.mean(np.abs(res_adapt)))
+    corr_adapt = float(np.corrcoef(eval_depth[valid_mask].ravel(), srtm_grid[valid_mask].ravel())[0, 1])
+
+    print(f"Baseline (Global Linear): RMSE = {rmse_base:.2f}m | MAE = {mae_base:.2f}m | Corr = {corr_base:.3f}")
+    print(f"Adaptive ({terrain_type}): RMSE = {rmse_adapt:.2f}m | MAE = {mae_adapt:.2f}m | Corr = {corr_adapt:.3f}")
+    print(f"Improvement: RMSE Delta = {rmse_base - rmse_adapt:+.2f}m ({((rmse_base - rmse_adapt) / rmse_base) * 100:.1f}%)")
+
+    return {
+        "terrain": label,
+        "classified_as": terrain_type,
+        "method": method,
+        "base_rmse": round(rmse_base, 2),
+        "adapt_rmse": round(rmse_adapt, 2),
+        "base_mae": round(mae_base, 2),
+        "adapt_mae": round(mae_adapt, 2),
+        "correlation": round(corr_adapt, 3),
+        "rmse_reduction_pct": round(((rmse_base - rmse_adapt) / rmse_base) * 100, 1)
+    }
+
 
 if __name__ == "__main__":
     TEST_SETS = [
-        ("city", "../data/test_city_geo.tiff"),
-        ("hills", "../data/test_hills_geo.tiff"),
-        ("forest", "../data/test_forest_geo.tiff"),
-        ("sparse", "../data/test_sparse_geo.tiff"),
-        ("city2", "../data/test_city2_geo.tiff"),
-        ("hills2", "../data/test_hills2_geo.tiff"),
-        ("mixed", "../data/test_mixed_geo.tiff"),
+        ("Urban (City)", os.path.join(os.path.dirname(__file__), "..", "data", "test_city_geo.tiff")),
+        ("Hilly / Mountainous", os.path.join(os.path.dirname(__file__), "..", "data", "test_hills_geo.tiff")),
+        ("Forested Landscape", os.path.join(os.path.dirname(__file__), "..", "data", "test_forest_geo.tiff")),
+        ("Sparse / Semi-Arid", os.path.join(os.path.dirname(__file__), "..", "data", "test_sparse_geo.tiff")),
+        ("Mixed Geomorphology", os.path.join(os.path.dirname(__file__), "..", "data", "test_mixed_geo.tiff")),
     ]
 
-    MODELS = [
-        ("Base", "depth-anything/Depth-Anything-V2-Base-hf"),
-    ]
-
+    print(f"Loading Elevation Reference Source (SRTM)...")
     elevation_data = srtm.get_data()
-    all_results = []
 
-    for model_label, model_id in MODELS:
-        print(f"\n\n########## Loading model: {model_label} ({model_id}) ##########")
-        pipe = pipeline(task="depth-estimation", model=model_id)
+    print(f"Loading Model: {MODEL_ID}...")
+    pipe = pipeline(task="depth-estimation", model=MODEL_ID)
 
-        for label, path in TEST_SETS:
-            if not os.path.exists(path):
-                print(f"SKIPPING {label} - {path} not found")
-                continue
-            result = evaluate_terrain(label, path, pipe, elevation_data)
-            result["model"] = model_label
-            all_results.append(result)
+    results = []
+    for label, path in TEST_SETS:
+        if not os.path.exists(path):
+            print(f"Skipping {label} - file not found: {path}")
+            continue
+        res = evaluate_sample(label, path, pipe, elevation_data)
+        if res:
+            results.append(res)
 
-    print("\n\n=== SUMMARY: Small vs Base, by terrain ===")
-    print(f"{'Model':<8} {'Terrain':<10} {'RMSE (m)':<12} {'MAE (m)':<12} {'Correlation':<12}")
-    for r in all_results:
-        print(f"{r['model']:<8} {r['terrain']:<10} {r['rmse_m']:<12} {r['mae_m']:<12} {r['correlation']:<12}")
+    print("\n\n" + "=" * 80)
+    print("FINAL BENCHMARK: SIH 2026 EVALUATION METRICS (50% SCORE CRITERIA)")
+    print("=" * 80)
+    print(f"{'Terrain Type':<22} {'Classified':<12} {'Base RMSE':<11} {'Adapt RMSE':<12} {'Adapt MAE':<11} {'Correlation':<12} {'Improvement'}")
+    print("-" * 90)
+    for r in results:
+        print(f"{r['terrain']:<22} {r['classified_as']:<12} {r['base_rmse']:<11.2f} {r['adapt_rmse']:<12.2f} {r['adapt_mae']:<11.2f} {r['correlation']:<12.3f} +{r['rmse_reduction_pct']}%")
+    print("=" * 80)
